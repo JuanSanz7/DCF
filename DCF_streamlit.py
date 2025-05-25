@@ -10,41 +10,41 @@ with st.sidebar.form("input_form"):
     st.header("Company Information")
     col1, col2 = st.columns(2)
     with col1:
-        company_name = st.text_input("Company Name", value="JD.com")
+        company_name = st.text_input("Company Name", value="GOOGL")
     with col2:
         currency = st.text_input("Currency", value="USD")
 
     st.header("Financial Information")
     col1, col2 = st.columns(2)
     with col1:
-        current_price = st.number_input("Current Price", value=33.55)
-        shares_outstanding = st.number_input("Shares Outstanding (millions)", value=1524.0)
-        cash = st.number_input("Cash (millions)", value=27000.0)
+        current_price = st.number_input("Current Price", value=168.4)
+        shares_outstanding = st.number_input("Shares Outstanding (millions)", value=12700.00)
+        cash = st.number_input("Cash (millions)", value=96000.00)
     with col2:
-        operating_income_base = st.number_input("Operating Income Base (millions)", value=6610.0)
-        debt = st.number_input("Debt (millions)", value=12000.0)
+        operating_income_base = st.number_input("Operating Income Base (millions)", value=154740.00)
+        debt = st.number_input("Debt (millions)", value=22000.00)
 
     st.header("Growth Parameters")
     col1, col2 = st.columns(2)
     with col1:
-        growth_rate_5y = st.number_input("Growth Rate 5y (%)", value=9.0)
+        growth_rate_5y = st.number_input("Growth Rate 5y (%)", value=15.0)
     with col2:
-        growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", value=7.0)
+        growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", value=8.0)
 
     st.header("Risk Parameters")
     col1, col2 = st.columns(2)
     with col1:
-        risk_free_rate = st.number_input("Risk Free Rate (%)", value=4.44)
-        equity_risk_premium = st.number_input("Equity Risk Premium (%)", value=5.3)
+        risk_free_rate = st.number_input("Risk Free Rate (%)", value=4.5)
+        equity_risk_premium = st.number_input("Equity Risk Premium (%)", value=5.13)
     with col2:
-        WACC = st.number_input("WACC (%)", value=9.0)
+        WACC = st.number_input("WACC (%)", value=9.6)
 
     st.header("Reinvestment Rates")
     col1, col2 = st.columns(2)
     with col1:
-        reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", value=35.0)
+        reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", value=50.0)
     with col2:
-        reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", value=40.0)
+        reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", value=50.0)
 
     st.header("Standard Deviations")
     col1, col2 = st.columns(2)
@@ -119,6 +119,16 @@ if submitted:
                 # Removed Intrinsic Value Distribution header
                 st.pyplot(fig_distribution_only)
 
+                # Add download button for the intrinsic value distribution plot in Summary tab
+                buf_dist_summary = io.BytesIO()
+                fig_distribution_only.savefig(buf_dist_summary, format="png")
+                st.download_button(
+                    label="Download Intrinsic Value Distribution Plot",
+                    data=buf_dist_summary.getvalue(),
+                    file_name=f"{company_name}_intrinsic_value_distribution_summary_plot.png",
+                    mime="image/png"
+                )
+
             with col2_summary:
                 st.markdown("""
                     <style>
@@ -128,9 +138,11 @@ if submitted:
                     </style>
                 """, unsafe_allow_html=True)
                 
+                # Centered header for the Valuation Summary
+                st.markdown("<h3 style='text-align: center;'>Valuation Summary</h3>", unsafe_allow_html=True)
+                
                 st.markdown(f"""
                     <div class="summary-text">
-                    <h3>Valuation Summary</h3>
                     <p><strong>Company:</strong> {valuation_summary['company_name']}<br>
                     <strong>Date:</strong> {valuation_summary['date']}<br>
                     <strong>-------------------</strong></p>
@@ -163,18 +175,18 @@ if submitted:
                     st.markdown(f"""
                         <div class="summary-text">
                         <p><strong>Variable Parameters:</strong><br>
-                        {valuation_summary['Variable Parameters']['Growth 5y']}<br>
-                        {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>
-                        {valuation_summary['Variable Parameters']['WACC']}<br>
-                        {valuation_summary['Variable Parameters']['Risk Premium']}<br>
-                        {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>
-                        {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
-                        {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
+                        Growth 5y: {valuation_summary['Variable Parameters']['Growth 5y']}<br>
+                        Growth 5-10y: {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>
+                        WACC: {valuation_summary['Variable Parameters']['WACC']}<br>
+                        Risk Premium: {valuation_summary['Variable Parameters']['Risk Premium']}<br>
+                        Risk Free Rate: {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>
+                        Reinvestment 5y: {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
+                        Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
                         
                         <p><strong>Terminal Value Params:</strong><br>
-                        {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
-                        {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
-                        {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
+                        Term. Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
+                        Term. WACC: {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
+                        Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
                         </div>
                     """, unsafe_allow_html=True)
 
