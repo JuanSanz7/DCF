@@ -120,31 +120,63 @@ if submitted:
                 st.pyplot(fig_distribution_only)
 
             with col2_summary:
-                st.header("Valuation Summary")
-                st.write(f"**Company:** {valuation_summary['company_name']}")
-                st.write(f"**Date:** {valuation_summary['date']}")
-                st.write("**-------------------**")
-                st.write(f"**Current Price:** {valuation_summary['current_price']}")
-                st.write(f"**Mean Value:** {valuation_summary['mean_value']}")
-                st.write(f"**Median Value:** {valuation_summary['median_value']}")
-                st.write(f"**Upside Potential:** {valuation_summary['upside_potential']}")
-
-                st.subheader("Probabilities")
-                st.write(f"**Overvaluation:** {valuation_summary['prob_overvalued']}")
-                st.write(f"**Undervaluation:** {valuation_summary['prob_undervalued']}")
-
-                st.subheader("Risk Metrics")
-                st.write(f"**VaR 95%:** {valuation_summary['VaR 95%']}")
-                st.write(f"**CVaR 95%:** {valuation_summary['CVaR 95%']}")
-                st.write(f"**Std. Deviation:** {valuation_summary['Std. Deviation']}")
-
-                st.subheader("Variable Parameters")
-                for param, value in valuation_summary['Variable Parameters'].items():
-                    st.write(f"**{param}:** {value}")
-
-                st.subheader("Terminal Value Parameters")
-                for param, value in valuation_summary['Terminal Value Params'].items():
-                    st.write(f"**{param}:** {value}")
+                st.markdown("""
+                    <style>
+                    .summary-text {
+                        font-size: 0.9em;
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                    <div class="summary-text">
+                    <h3>Valuation Summary</h3>
+                    <p><strong>Company:</strong> {valuation_summary['company_name']}<br>
+                    <strong>Date:</strong> {valuation_summary['date']}<br>
+                    <strong>-------------------</strong></p>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Create two columns for the summary content
+                sum_col1, sum_col2 = st.columns(2)
+                
+                with sum_col1:
+                    st.markdown(f"""
+                        <div class="summary-text">
+                        <p><strong>Current Price:</strong> {valuation_summary['current_price']}<br>
+                        <strong>Mean Value:</strong> {valuation_summary['mean_value']}<br>
+                        <strong>Median Value:</strong> {valuation_summary['median_value']}<br>
+                        <strong>Upside Potential:</strong> {valuation_summary['upside_potential']}</p>
+                        
+                        <p><strong>Probabilities:</strong><br>
+                        Overvaluation: {valuation_summary['prob_overvalued']}<br>
+                        Undervaluation: {valuation_summary['prob_undervalued']}</p>
+                        
+                        <p><strong>Risk Metrics:</strong><br>
+                        VaR 95%: {valuation_summary['VaR 95%']}<br>
+                        CVaR 95%: {valuation_summary['CVaR 95%']}<br>
+                        Std. Deviation: {valuation_summary['Std. Deviation']}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                with sum_col2:
+                    st.markdown(f"""
+                        <div class="summary-text">
+                        <p><strong>Variable Parameters:</strong><br>
+                        {valuation_summary['Variable Parameters']['Growth 5y']}<br>
+                        {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>
+                        {valuation_summary['Variable Parameters']['WACC']}<br>
+                        {valuation_summary['Variable Parameters']['Risk Premium']}<br>
+                        {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>
+                        {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
+                        {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
+                        
+                        <p><strong>Terminal Value Params:</strong><br>
+                        {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
+                        {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
+                        {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
 
         # Close the plot figures to free up memory
         plt.close(fig_es)

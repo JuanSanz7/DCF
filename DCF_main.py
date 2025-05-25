@@ -211,8 +211,8 @@ def run_monte_carlo_simulation(params):
         combined_lines.append(f"{left:<35} {right:<35}")
     summary_text = title + '\n\n' + '\n'.join(combined_lines)
     axs[0, 1].text(0.5, 0.5, summary_text, fontsize=10, fontfamily='monospace', 
-             horizontalalignment='center', verticalalignment='center',
-             bbox=dict(facecolor='white', alpha=0.8))
+                  horizontalalignment='center', verticalalignment='center',
+                  bbox=dict(facecolor='white', alpha=0.8))
 
     plt.tight_layout()
 
