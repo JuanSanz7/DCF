@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
 from datetime import datetime
+from matplotlib.gridspec import GridSpec # Import GridSpec
 
 def run_monte_carlo_simulation(params):
     # Unpack parameters
@@ -106,9 +107,12 @@ def run_monte_carlo_simulation(params):
         std_norm = (df_params[param] - df_params[param].mean()) / df_params[param].std()
         coef = np.polyfit(std_norm, df_params['value_per_share'], 1)[0]
         sensitivities[param] = {'correlation': correlation, 'impact': coef}
-    # Spanish Figure
+
+    # Create the original combined 2x2 figure (fig_es)
     fig_es, axs = plt.subplots(2, 2, figsize=(15, 10))
-    # 1. Histograma
+    plt.style.use('seaborn-v0_8-darkgrid')
+
+    # Plot 1: Intrinsic Value Distribution
     ax = axs[0, 0]
     ax.hist(results, bins=50, density=True, alpha=0.7, color='skyblue', edgecolor='black')
     ax.axvspan(mean_value - 3*std_value, mean_value - 2*std_value, color='red', alpha=0.1, label='±3σ')
@@ -122,7 +126,48 @@ def run_monte_carlo_simulation(params):
     ax.set_xlabel(f'Intrinsic Value per Share ({currency})')
     ax.set_ylabel('Density')
     ax.legend()
-    # 2. Resumen de Valores Clave
+
+    # Plot 2: FCF Projection
+    ax = axs[1, 0]
+    fcf_mean = np.mean(fcf_projections, axis=0)
+    fcf_std = np.std(fcf_projections, axis=0)
+    years = range(1, 11)
+    ax.fill_between(years, 
+                    fcf_mean - 3*fcf_std,
+                    fcf_mean + 3*fcf_std,
+                    color='red',
+                    alpha=0.1,
+                    label='±3σ')
+    ax.fill_between(years, 
+                    fcf_mean - 2*fcf_std,
+                    fcf_mean + 2*fcf_std,
+                    color='orange',
+                    alpha=0.1,
+                    label='±2σ')
+    ax.fill_between(years, 
+                    fcf_mean - fcf_std,
+                    fcf_mean + fcf_std,
+                    color='green',
+                    alpha=0.1,
+                    label='±1σ')
+    ax.plot(years, fcf_mean, marker='o', color='blue', label='Average FCF')
+    ax.set_title(f'{company_name} - Free Cash Flow Projection')
+    ax.set_xlabel('Year')
+    ax.set_ylabel(f'FCF (Millions {currency})')
+    ax.legend()
+    ax.grid(True)
+
+    # Plot 3: Sensitivity Analysis (Tornado plot) within fig_es
+    ax = axs[1, 1]
+    sensitivity_data = pd.DataFrame.from_dict(sensitivities, orient='index')
+    sensitivity_data = sensitivity_data.sort_values('impact', ascending=True)
+    ax.barh(range(len(sensitivity_data)), sensitivity_data['impact'], align='center')
+    ax.set_yticks(range(len(sensitivity_data)))
+    ax.set_yticklabels(sensitivity_data.index)
+    ax.set_title(f'{company_name} - Sensitivity Analysis')
+    ax.set_xlabel(f'Impact on Value per Share ({currency}/σ)')
+
+    # Matplotlib-rendered Valuation Summary within fig_es
     axs[0, 1].axis('off')
     title = (
         f"VALUATION SUMMARY - {company_name}\n"
@@ -166,96 +211,66 @@ def run_monte_carlo_simulation(params):
         combined_lines.append(f"{left:<35} {right:<35}")
     summary_text = title + '\n\n' + '\n'.join(combined_lines)
     axs[0, 1].text(0.5, 0.5, summary_text, fontsize=10, fontfamily='monospace', 
-                  horizontalalignment='center', verticalalignment='center',
-                  bbox=dict(facecolor='white', alpha=0.8))
-    # 3. Proyección de FCF promedio
-    ax = axs[1, 0]
-    fcf_mean = np.mean(fcf_projections, axis=0)
-    fcf_std = np.std(fcf_projections, axis=0)
-    years = range(1, 11)
-    ax.fill_between(years, 
-                    fcf_mean - 3*fcf_std,
-                    fcf_mean + 3*fcf_std,
-                    color='red',
-                    alpha=0.1,
-                    label='±3σ')
-    ax.fill_between(years, 
-                    fcf_mean - 2*fcf_std,
-                    fcf_mean + 2*fcf_std,
-                    color='orange',
-                    alpha=0.1,
-                    label='±2σ')
-    ax.fill_between(years, 
-                    fcf_mean - fcf_std,
-                    fcf_mean + fcf_std,
-                    color='green',
-                    alpha=0.1,
-                    label='±1σ')
-    ax.plot(years, fcf_mean, marker='o', color='blue', label='Average FCF')
-    ax.set_title(f'{company_name} - Free Cash Flow Projection')
-    ax.set_xlabel('Year')
-    ax.set_ylabel(f'FCF (Millions {currency})')
-    ax.legend()
-    ax.grid(True)
-    # 4. Análisis de sensibilidad (Tornado plot)
-    ax = axs[1, 1]
-    sensitivity_data = pd.DataFrame.from_dict(sensitivities, orient='index')
-    sensitivity_data = sensitivity_data.sort_values('impact', ascending=True)
-    ax.barh(range(len(sensitivity_data)), sensitivity_data['impact'], align='center')
-    ax.set_yticks(range(len(sensitivity_data)))
-    ax.set_yticklabels(sensitivity_data.index)
-    ax.set_title(f'{company_name} - Sensitivity Analysis')
-    ax.set_xlabel(f'Impact on Value per Share ({currency}/σ)')
-    plt.tight_layout()
-    # English Figure
-    from matplotlib.gridspec import GridSpec
-    fig_en = plt.figure(figsize=(15, 8))
-    gs = GridSpec(1, 2, width_ratios=[7, 3])
-    ax1 = fig_en.add_subplot(gs[0])
-    ax1.hist(results, bins=50, density=True, alpha=0.7, color='skyblue', edgecolor='black')
-    ax1.axvspan(mean_value - 3*std_value, mean_value - 2*std_value, color='red', alpha=0.1, label='±3σ')
-    ax1.axvspan(mean_value + 2*std_value, mean_value + 3*std_value, color='red', alpha=0.1)
-    ax1.axvspan(mean_value - 2*std_value, mean_value - std_value, color='orange', alpha=0.1, label='±2σ')
-    ax1.axvspan(mean_value + std_value, mean_value + 2*std_value, color='orange', alpha=0.1)
-    ax1.axvspan(mean_value - std_value, mean_value + std_value, color='green', alpha=0.1, label='±1σ')
-    ax1.axvline(mean_value, color='red', linestyle='--', label='Mean')
-    ax1.axvline(current_price, color='purple', linestyle='-', label='Current Price')
-    ax1.set_title(f'{company_name} - Intrinsic Value Distribution')
-    ax1.set_xlabel(f'Intrinsic Value per Share ({currency})')
-    ax1.set_ylabel('Density')
-    ax1.legend()
-    ax2 = fig_en.add_subplot(gs[1])
-    ax2.axis('off')
-    summary_text = (
-        f"VALUATION SUMMARY - {company_name}\n"
-        f"Date: {current_date}\n"
-        f"-------------------\n\n"
-        f"Current Price: {current_price:.2f} {currency}\n"
-        f"Mean Value: {mean_value:.2f} {currency}\n"
-        f"Median Value: {median_value:.2f} {currency}\n"
-        f"Upside Potential: {upside_potential:.1f}%\n\n"
-        f"Probabilities:\n"
-        f"Overvaluation: {prob_overvalued:.1f}%\n"
-        f"Undervaluation: {prob_undervalued:.1f}%\n\n"
-        f"Risk Metrics:\n"
-        f"VaR 95%: {var_95:.2f} {currency}\n"
-        f"CVaR 95%: {cvar_95:.2f} {currency}\n"
-        f"Std. Deviation: {std_value:.2f} {currency}\n\n"
-        f"Variable Parameters:\n"
-        f"Growth 5y: {growth_rate_5y*100:.1f}% (±{std_growth_5y*100:.1f}%)\n"
-        f"Growth 5-10y: {growth_rate_5_10y*100:.1f}% (±{std_growth_5_10y*100:.1f}%)\n"
-        f"WACC: {WACC*100:.1f}% (±{std_WACC*100:.1f}%)\n"
-        f"Risk Premium: {equity_risk_premium*100:.1f}% (±{std_equity_premium*100:.1f}%)\n"
-        f"Risk Free Rate: {risk_free_rate*100:.1f}% (±{std_risk_free*100:.1f}%)\n"
-        f"Reinvestment 5y: {reinvestment_rate_5y*100:.1f}% (±{std_reinv_5y*100:.1f}%)\n"
-        f"Reinvestment 5-10y: {reinvestment_rate_5_10y*100:.1f}% (±{std_reinv_5_10y*100:.1f}%)\n"
-        f"\nTerminal Value Params:\n"
-        f"Term. Growth = RFR\n"
-        f"Term. WACC = RFR + ERP\n"
-        f"Term. Reinv Rate = TG / TWACC"
-    )
-    ax2.text(0.5, 0.5, summary_text, fontsize=10, fontfamily='monospace', 
              horizontalalignment='center', verticalalignment='center',
              bbox=dict(facecolor='white', alpha=0.8))
-    fig_en.tight_layout()
-    return fig_es, fig_en 
+
+    plt.tight_layout()
+
+    # Create a separate figure for Intrinsic Value Distribution only
+    fig_distribution_only, ax_dist_only = plt.subplots(figsize=(10, 6))
+    plt.style.use('seaborn-v0_8-darkgrid')
+    ax_dist_only.hist(results, bins=50, density=True, alpha=0.7, color='skyblue', edgecolor='black')
+    ax_dist_only.axvspan(mean_value - 3*std_value, mean_value - 2*std_value, color='red', alpha=0.1, label='±3σ')
+    ax_dist_only.axvspan(mean_value + 2*std_value, mean_value + 3*std_value, color='red', alpha=0.1)
+    ax_dist_only.axvspan(mean_value - 2*std_value, mean_value - std_value, color='orange', alpha=0.1, label='±2σ')
+    ax_dist_only.axvspan(mean_value + std_value, mean_value + 2*std_value, color='orange', alpha=0.1)
+    ax_dist_only.axvspan(mean_value - std_value, mean_value + std_value, color='green', alpha=0.1, label='±1σ')
+    ax_dist_only.axvline(mean_value, color='red', linestyle='--', label='Mean')
+    ax_dist_only.axvline(current_price, color='purple', linestyle='-', label='Current Price')
+    ax_dist_only.set_title(f'{company_name} - Intrinsic Value Distribution')
+    ax_dist_only.set_xlabel(f'Intrinsic Value per Share ({currency})')
+    ax_dist_only.set_ylabel('Density')
+    ax_dist_only.legend()
+    plt.tight_layout()
+
+    # Create a separate figure for Sensitivity Analysis only
+    fig_sensitivity, ax_sens_only = plt.subplots(figsize=(10, 6))
+    sensitivity_data = pd.DataFrame.from_dict(sensitivities, orient='index')
+    sensitivity_data = sensitivity_data.sort_values('impact', ascending=True)
+    ax_sens_only.barh(range(len(sensitivity_data)), sensitivity_data['impact'], align='center')
+    ax_sens_only.set_yticks(range(len(sensitivity_data)))
+    ax_sens_only.set_yticklabels(sensitivity_data.index)
+    ax_sens_only.set_title(f'{company_name} - Sensitivity Analysis')
+    ax_sens_only.set_xlabel(f'Impact on Value per Share ({currency}/σ)')
+    plt.tight_layout()
+
+    # Create valuation summary dictionary
+    valuation_summary = {
+        'company_name': company_name,
+        'date': current_date,
+        'current_price': f"{current_price:.2f} {currency}",
+        'mean_value': f"{mean_value:.2f} {currency}",
+        'median_value': f"{median_value:.2f} {currency}",
+        'upside_potential': f"{upside_potential:.1f}%",
+        'prob_overvalued': f"{prob_overvalued:.1f}%",
+        'prob_undervalued': f"{prob_undervalued:.1f}%",
+        'VaR 95%': f"{var_95:.2f} {currency}",
+        'CVaR 95%': f"{cvar_95:.2f} {currency}",
+        'Std. Deviation': f"{std_value:.2f} {currency}",
+        'Variable Parameters': {
+            'Growth 5y': f"{growth_rate_5y*100:.1f}% (±{std_growth_5y*100:.1f}%)",
+            'Growth 5-10y': f"{growth_rate_5_10y*100:.1f}% (±{std_growth_5_10y*100:.1f}%)",
+            'WACC': f"{WACC*100:.1f}% (±{std_WACC*100:.1f}%)",
+            'Risk Premium': f"{equity_risk_premium*100:.1f}% (±{std_equity_premium*100:.1f}%)",
+            'Risk Free Rate': f"{risk_free_rate*100:.1f}% (±{std_risk_free*100:.1f}%)",
+            'Reinvestment 5y': f"{reinvestment_rate_5y*100:.1f}% (±{std_reinv_5y*100:.1f}%)",
+            'Reinvestment 5-10y': f"{reinvestment_rate_5_10y*100:.1f}% (±{std_reinv_5_10y*100:.1f}%)"
+        },
+        'Terminal Value Params': {
+            'Term. Growth': 'RFR',
+            'Term. WACC': 'RFR + ERP',
+            'Term. Reinv Rate': 'TG / TWACC'
+        }
+    }
+
+    return fig_es, fig_distribution_only, fig_sensitivity, valuation_summary 

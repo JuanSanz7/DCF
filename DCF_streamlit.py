@@ -1,6 +1,6 @@
 import streamlit as st
 import matplotlib.pyplot as plt
-import io # Import the io module
+import io
 from DCF_main import run_monte_carlo_simulation
 
 st.set_page_config(page_title="DCF Monte Carlo Valuation Tool", layout="wide")
@@ -93,25 +93,32 @@ if submitted:
         'n_simulations': int(n_simulations)
     }
     with st.spinner("Running Monte Carlo simulation..."):
-        fig_es, fig_sensitivity, valuation_summary = run_monte_carlo_simulation(params)
+        fig_es, fig_distribution_only, fig_sensitivity, valuation_summary = run_monte_carlo_simulation(params)
         st.success(f"Monte Carlo simulation for {company_name} completed successfully!")
 
-        tab1, tab2 = st.tabs(["results", "valuation summary"])
+        tab1, tab2 = st.tabs(["Results", "Summary"])
+        
         with tab1:
-            # Use columns to display the results plot and the summary side-by-side
-            col1_results, col2_summary = st.columns([2, 1]) # Adjust column ratios as needed
-            with col1_results:
-                st.header("Intrinsic Value Distribution")
-                st.pyplot(fig_es)
-                # Save plot to a BytesIO object and create a download button
-                buf_es = io.BytesIO()
-                fig_es.savefig(buf_es, format="png")
-                st.download_button(
-                    label="Download Results Plot",
-                    data=buf_es.getvalue(),
-                    file_name=f"{company_name}_valuation_plot_results.png",
-                    mime="image/png"
-                )
+            # Removed Results header
+            st.pyplot(fig_es)
+            
+            # Add download button for the results plot
+            buf_es = io.BytesIO()
+            fig_es.savefig(buf_es, format="png")
+            st.download_button(
+                label="Download Results Plot",
+                data=buf_es.getvalue(),
+                file_name=f"{company_name}_results_plot.png",
+                mime="image/png"
+            )
+
+        with tab2:
+            # Use columns to display the distribution plot and the summary side-by-side
+            col1_dist, col2_summary = st.columns([2, 1]) # Adjust column ratios as needed
+            with col1_dist:
+                # Removed Intrinsic Value Distribution header
+                st.pyplot(fig_distribution_only)
+
             with col2_summary:
                 st.header("Valuation Summary")
                 st.write(f"**Company:** {valuation_summary['company_name']}")
@@ -139,19 +146,7 @@ if submitted:
                 for param, value in valuation_summary['Terminal Value Params'].items():
                     st.write(f"**{param}:** {value}")
 
-        with tab2:
-            st.header("Sensitivity Analysis")
-            st.pyplot(fig_sensitivity)
-            # Save plot to a BytesIO object and create a download button
-            buf_sensitivity = io.BytesIO()
-            fig_sensitivity.savefig(buf_sensitivity, format="png")
-            st.download_button(
-                label="Download Sensitivity Plot",
-                data=buf_sensitivity.getvalue(),
-                file_name=f"{company_name}_sensitivity_plot.png",
-                mime="image/png"
-            )
-
         # Close the plot figures to free up memory
         plt.close(fig_es)
+        plt.close(fig_distribution_only)
         plt.close(fig_sensitivity) 
