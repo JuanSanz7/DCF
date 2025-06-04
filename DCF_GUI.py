@@ -216,7 +216,11 @@ class MonteCarloGUI:
                 'std_reinv_5_10y': float(self.std_reinv_5_10y.get()) / 100,
                 'n_simulations': int(self.n_simulations.get())
             }
-            fig_es, _ = DCF_main.run_monte_carlo_simulation(params)
+            # run_monte_carlo_simulation returns four values but the GUI only
+            # needs the main summary plot for display.  Unpack all returned
+            # values to avoid a ValueError on assignment and discard the ones
+            # that are not used in the GUI context.
+            fig_es, _, _, _ = DCF_main.run_monte_carlo_simulation(params)
             fig_es.set_size_inches(10, 7)
             fig_es.tight_layout()
             for widget in self.plot_frame.winfo_children():
