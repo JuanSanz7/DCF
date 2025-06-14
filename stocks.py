@@ -18,7 +18,7 @@ import matplotlib.dates as mdates
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('stock_analysis.log'),
@@ -36,12 +36,17 @@ custom_eps_data = {
     "JD": {2024: 3.75, 2023: 2.14, 2022: 0.94, 2021: -0.35, 2020: 4.62, 2019: 1.20, 2018: 0.10, 2017: 0.10, 2016: -0.36, 2015: -1.07},
     "V": {2024: 9.5, 2023: 8.6, 2022: 7.5, 2021: 5.9, 2020: 4.9, 2019: 5.3, 2018: 4.3, 2017: 3.5, 2016: 2.3, 2015: 2.1},
     "BABA": {2024: 7.5, 2023: 4.9, 2022: 4.6, 2021: 3.9, 2020: 8.8, 2019: 8.6, 2018: 5.3, 2017: 4.0, 2016: 3.1, 2015: 2.2},
-    "LDO": {2024: 1.90, 2023: 1.71, 2022: 1.58, 2021: 1.32, 2020: 1.25, 2019: 1.28, 2018: 1.22, 2017: 1.18, 2016: 1.13, 2015: 1.09},
+    "LDO.MI": {2024: 1.90, 2023: 1.71, 2022: 1.58, 2021: 1.32, 2020: 1.25, 2019: 1.28, 2018: 1.22, 2017: 1.18, 2016: 1.13, 2015: 1.09},
     "LVMHF": {2024: 26.0, 2023: 30.4, 2022: 29.7, 2021: 24.1, 2020: 16.6, 2019: 14.3, 2018: 12.7, 2017: 11.2, 2016: 8.7, 2015: 8.0},
     "VID.MC": {2024: 8.8, 2023: 7.3, 2022: 4.7, 2021: 4.5, 2020: 5.3, 2019: 5.6, 2018: 4.7, 2017: 3.6, 2016: 2.8, 2015: 2.4},
     "ROG.SW": {2024: 18.8, 2023: 18.8, 2022: 21.0, 2021: 20.9, 2020: 19.8, 2019: 20.9, 2018: 18.6, 2017: 15.1, 2016: 14.5, 2015: 13.7},
-    "AAPL": {2024: 6.5, 2023: 6.1, 2022: 6.1, 2021: 5.6, 2020: 3.3, 2019: 2.9, 2018: 2.3, 2017: 2.1, 2016: 2.1, 2015: 2.3},
-    "TEP": {2024: 8.8, 2023: 10.2, 2022: 10.8, 2021: 9.7, 2020: 6.0, 2019: 7.0, 2018: 5.4, 2017: 5.4, 2016: 3.7, 2015: 3.5}
+    "TEP.PA": {2024: 8.8, 2023: 10.2, 2022: 10.8, 2021: 9.7, 2020: 6.0, 2019: 7.0, 2018: 5.4, 2017: 5.4, 2016: 3.7, 2015: 3.5}
+}
+
+# Currency conversion rates (as of latest data)
+CURRENCY_RATES = {
+    "TWD": 0.032,  # 1 TWD = 0.032 USD
+    "CNY": 0.14,   # 1 CNY = 0.14 USD
 }
 
 class StockAnalyzer:
@@ -127,8 +132,8 @@ class StockAnalyzer:
             if stock.ticker in custom_eps_data:
                 logging.info(f"Using custom EPS data for {stock.ticker}")
                 eps_values = custom_eps_data[stock.ticker]
-                # Generate dates for the custom EPS data, ending August of each year
-                eps_dates = [datetime(year, 8, 31) for year in sorted(eps_values.keys())]
+                # Generate dates for the custom EPS data, using July 2nd of each year
+                eps_dates = [datetime(year, 7, 2) for year in sorted(eps_values.keys())]
                 custom_eps_series = pd.Series([eps_values[year] for year in sorted(eps_values.keys())], index=pd.to_datetime(eps_dates).tz_localize(None))
 
                 # Reindex custom_eps_series to align with hist's daily index
@@ -136,11 +141,41 @@ class StockAnalyzer:
                 combined_eps = combined_eps.bfill().ffill() # Ensure all NaNs are filled, including leading ones
 
                 self.annual_eps_plot_data = custom_eps_series.copy() # Store for direct plotting (original annual points)
-                self.ttm_eps_data = {'value': combined_eps.iloc[-1], 'date': combined_eps.index[-1]} # Use the latest ffilled EPS as TTM
+                logging.debug(f"DEBUG: annual_eps_plot_data after custom data processing in _prepare_historical_data: {self.annual_eps_plot_data}")
 
-            else:
+            # This block will now calculate TTM EPS for ALL tickers, regardless of custom annual data
+            # It ensures self.ttm_eps_data always holds the latest *true* TTM from Yahoo
+            ttm_eps = np.nan
+            ttm_date = None
+            try:
+                if 'Diluted EPS' in stock.quarterly_financials.index and not stock.quarterly_financials.empty:
+                    quarterly_diluted_eps = stock.quarterly_financials.loc['Diluted EPS']
+                    # Ensure quarterly_diluted_eps index is datetime and timezone-naive
+                    quarterly_diluted_eps.index = pd.to_datetime(quarterly_diluted_eps.index, errors='coerce').dropna()
+                    quarterly_diluted_eps.index = quarterly_diluted_eps.index.tz_localize(None)
+                    quarterly_diluted_eps = quarterly_diluted_eps.sort_index(ascending=False)
+
+                    if len(quarterly_diluted_eps) >= 4:
+                        ttm_eps = quarterly_diluted_eps.head(4).sum()
+                        # Use the latest date from the quarterly EPS for the TTM date
+                        ttm_date = quarterly_diluted_eps.index[0]
+                        
+                        # Convert TTM EPS to USD for specific stocks
+                        if stock.ticker == "TSM":
+                            ttm_eps *= CURRENCY_RATES["TWD"]
+                        elif stock.ticker in ["JD", "BABA"]:
+                            ttm_eps *= CURRENCY_RATES["CNY"]
+                    else:
+                        logging.warning(f"Less than 4 quarterly Diluted EPS values available for {stock.ticker}. Cannot calculate TTM EPS.")
+            except Exception as e:
+                logging.error(f"Error calculating TTM EPS for {stock.ticker}: {str(e)}")
+
+            self.ttm_eps_data = {'value': ttm_eps, 'date': ttm_date}
+
+            # If no custom data, or if custom data doesn't cover all years,
+            # we need to combine with Yahoo's annual/quarterly EPS for comprehensive plotting
+            if stock.ticker not in custom_eps_data:
                 # Original logic for fetching EPS from yfinance if no custom data is provided
-                # Get annual and quarterly income statements with validation
                 try:
                     annual_income_stmt = stock.income_stmt
                     quarterly_income_stmt = stock.quarterly_financials
@@ -153,27 +188,6 @@ class StockAnalyzer:
                     logging.error(f"Error fetching financial statements for {stock.ticker}: {str(e)}")
                     annual_income_stmt = pd.DataFrame()
                     quarterly_income_stmt = pd.DataFrame()
-
-                # Calculate TTM EPS with validation
-                ttm_eps = np.nan
-                ttm_date = None
-                try:
-                    if 'Diluted EPS' in quarterly_income_stmt.index and not quarterly_income_stmt.empty:
-                        quarterly_diluted_eps = quarterly_income_stmt.loc['Diluted EPS']
-                        # Ensure quarterly_diluted_eps index is datetime and timezone-naive
-                        quarterly_diluted_eps.index = pd.to_datetime(quarterly_diluted_eps.index, errors='coerce').dropna()
-                        quarterly_diluted_eps.index = quarterly_diluted_eps.index.tz_localize(None)
-                        quarterly_diluted_eps = quarterly_diluted_eps.sort_index(ascending=False)
-
-                        if len(quarterly_diluted_eps) >= 4:
-                            ttm_eps = quarterly_diluted_eps.head(4).sum()
-                            ttm_date = quarterly_diluted_eps.index[0]
-                        else:
-                            logging.warning(f"Less than 4 quarterly Diluted EPS values available for {stock.ticker}. Cannot calculate TTM EPS.")
-                except Exception as e:
-                    logging.error(f"Error calculating TTM EPS for {stock.ticker}: {str(e)}")
-
-                self.ttm_eps_data = {'value': ttm_eps, 'date': ttm_date}
 
                 # Extract Diluted EPS as a Series, then convert its index to datetime with errors='coerce'
                 try:
@@ -188,11 +202,6 @@ class StockAnalyzer:
                     quarterly_eps = quarterly_eps.sort_index()
 
                     combined_eps = pd.concat([annual_eps, quarterly_eps]).sort_index().drop_duplicates(keep='last')
-                    
-                    # For other tickers, also append TTM EPS if available to combined_eps
-                    if not np.isnan(self.ttm_eps_data['value']) and self.ttm_eps_data['date'] is not None:
-                        ttm_series = pd.Series([self.ttm_eps_data['value']], index=[self.ttm_eps_data['date'].replace(day=1, month=1)])
-                        combined_eps = pd.concat([combined_eps, ttm_series]).sort_index().drop_duplicates(keep='last')
 
                 except Exception as e:
                     logging.error(f"Error processing EPS data for {stock.ticker}: {str(e)}")
@@ -202,7 +211,12 @@ class StockAnalyzer:
                 if combined_eps.index.tz is not None:
                     combined_eps.index = combined_eps.index.tz_localize(None)
 
+                # Adjust EPS dates to July 2nd for consistent plotting
+                if not combined_eps.empty:
+                    combined_eps.index = combined_eps.index.map(lambda x: x.replace(month=7, day=2))
+
                 self.annual_eps_plot_data = combined_eps.copy() # Store for direct plotting
+                logging.debug(f"DEBUG: annual_eps_plot_data after non-custom data processing in _prepare_historical_data: {self.annual_eps_plot_data}")
 
             # Drop potential duplicate dates from hist before reindexing
             hist = hist[~hist.index.duplicated(keep='first')]
@@ -253,7 +267,9 @@ class StockAnalyzer:
                 return
             short_name = stock.info.get('shortName', ticker_symbol)
             # Fetch historical data for a specific 10-year period aligned with user-provided EPS
-            hist = stock.history(start="2014-08-01", end="2024-08-31") 
+            end_date = datetime.now()
+            start_date = end_date.replace(year=end_date.year - 10)
+            hist = stock.history(start=start_date, end=end_date)
             # Ensure hist is timezone-naive immediately after fetching
             hist.index = hist.index.tz_localize(None) if hist.index.tz is not None else hist.index
             # Ensure hist has a unique index immediately after fetching
@@ -347,10 +363,10 @@ class StockAnalyzer:
                 return "<p>Dividend data not available.</p>"
             
             data = {
-                "Annual Dividend Yield (%)": f"{info.get('dividendYield', np.nan) * 100:.2f}" if pd.notnull(info.get('dividendYield')) else 'N/A',
-                "5-Year Average Dividend Yield (%)": f"{info.get('fiveYearAvgDividendYield', np.nan) * 100:.2f}" if pd.notnull(info.get('fiveYearAvgDividendYield')) else 'N/A',
-                "10-Year Annual Dividend Growth (%)": f"{info.get('tenYrAvgAnnualIncreaseInDividends', np.nan) * 100:.2f}" if pd.notnull(info.get('tenYrAvgAnnualIncreaseInDividends')) else 'N/A',
-                "Payout Ratio (%)": f"{info.get('payoutRatio', np.nan) * 100:.2f}" if pd.notnull(info.get('payoutRatio')) else 'N/A'
+                "Annual Dividend Yield (%)": f"{info.get('dividendYield', np.nan) :.2f}" if pd.notnull(info.get('dividendYield')) else 'N/A',
+                "5-Year Average Dividend Yield (%)": f"{info.get('fiveYearAvgDividendYield', np.nan) :.2f}" if pd.notnull(info.get('fiveYearAvgDividendYield')) else 'N/A',
+                "10-Year Annual Dividend Growth (%)": f"{info.get('tenYrAvgAnnualIncreaseInDividends', np.nan) / 100:.2f}" if pd.notnull(info.get('tenYrAvgAnnualIncreaseInDividends')) else 'N/A',
+                "Payout Ratio (%)": f"{info.get('payoutRatio', np.nan) :.2f}" if pd.notnull(info.get('payoutRatio')) else 'N/A'
             }
             df = pd.DataFrame(data, index=[0])
             
@@ -419,8 +435,8 @@ class StockAnalyzer:
             for col in ['Held by insiders (%)', 'Held by institutions (%)']:
                 if col in major_holders_df.columns:
                     # Remove '%' before converting to float
-                    major_holders_df[col] = major_holders_df[col].astype(str).str.replace('%', '').astype(float) 
-                    major_holders_df[col] = major_holders_df[col].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else 'N/A') # Removed *100 here since it's already a percentage from yfinance if it has the '%' sign.
+                    major_holders_df[col] = major_holders_df[col].astype(str).str.replace('%', '').astype(float)
+                    major_holders_df[col] = major_holders_df[col].apply(lambda x: f"{x * 100:.2f}" if pd.notnull(x) else 'N/A')
 
             return HTML(f"<h3>Holders</h3>").data + self.style_dataframe_html(major_holders_df, show_index=False)
         except Exception as e:
@@ -722,16 +738,10 @@ class StockAnalyzer:
             # Check if Diluted EPS data is available before plotting
             # For tickers with custom EPS, use the stored annual EPS data directly for precise plotting
             if stock.ticker in custom_eps_data:
-                # Use the stored annual EPS data; its index already has the correct dates (August 31st)
+                # Use the stored annual EPS data; its index already has the correct dates (July 2nd)
                 annual_eps_for_plot = self.annual_eps_plot_data.copy()
                 # Ensure only one point per year by dropping duplicates, keeping the latest if any
                 annual_eps_for_plot = annual_eps_for_plot[~annual_eps_for_plot.index.duplicated(keep='last')]
-
-                # Add TTM EPS as a distinct point at its actual date
-                if not np.isnan(self.ttm_eps_data['value']) and self.ttm_eps_data['date'] is not None:
-                    ttm_date_for_plot = self.ttm_eps_data['date']
-                    temp_ttm_eps_series = pd.Series([self.ttm_eps_data['value']], index=[ttm_date_for_plot])
-                    annual_eps_for_plot = pd.concat([annual_eps_for_plot, temp_ttm_eps_series]).sort_index().drop_duplicates(keep='last')
 
             elif 'Diluted EPS' in stock.income_stmt.index and not stock.income_stmt.loc['Diluted EPS'].isnull().all():
                 # For other tickers, extract annual/quarterly EPS directly for plotting, not the ffill'd daily data
@@ -747,12 +757,10 @@ class StockAnalyzer:
 
                 combined_eps_raw = pd.concat([annual_eps_raw, quarterly_eps_raw]).sort_index().drop_duplicates(keep='last')
                 
-                # Add TTM EPS point if available at its actual date
-                if not np.isnan(self.ttm_eps_data['value']) and self.ttm_eps_data['date'] is not None:
-                    ttm_date = self.ttm_eps_data['date'] # Use actual TTM date
-                    combined_eps_raw = pd.concat([combined_eps_raw, pd.Series([self.ttm_eps_data['value']], index=[ttm_date])]).sort_index().drop_duplicates(keep='last')
-
-                # No need to align to year-start for plotting if using actual dates
+                # Adjust EPS dates to July 2nd for consistent plotting
+                if not combined_eps_raw.empty:
+                    combined_eps_raw.index = combined_eps_raw.index.map(lambda x: x.replace(month=7, day=2))
+                
                 annual_eps_for_plot = combined_eps_raw.copy()
                 annual_eps_for_plot = annual_eps_for_plot[~annual_eps_for_plot.index.duplicated(keep='last')] # Ensure unique points per year
             else:
@@ -765,13 +773,32 @@ class StockAnalyzer:
             ax1.set_ylabel('EPS', color=color_eps)
             
             if not annual_eps_for_plot.empty:
+                logging.debug(f"DEBUG: annual_eps_for_plot before TTM addition in _generate_eps_pe_plots: {annual_eps_for_plot}")
+                current_year = datetime.now().year
+                # Only add TTM EPS for the current year if it's not already in custom/annual data
+                if current_year not in annual_eps_for_plot.index.year and not np.isnan(self.ttm_eps_data['value']) and self.ttm_eps_data['date'] is not None:
+                    current_year_date = datetime(current_year, 7, 2) # Align to July 2nd
+                    ttm_series = pd.Series([self.ttm_eps_data['value']], index=[current_year_date])
+                    annual_eps_for_plot = pd.concat([annual_eps_for_plot, ttm_series]).sort_index().drop_duplicates(keep='last')
+
                 # Plot with markers and a line connecting the annual points
                 ax1.plot(annual_eps_for_plot.index, annual_eps_for_plot, marker='o', linestyle='-', color=color_eps)
-                # Set x-axis ticks to be exactly at the annual data points
-                ax1.set_xticks(annual_eps_for_plot.index)
-                ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y')) # Format as year
-                # Set x-axis limits based on the overall historical data range, extended to show last point clearly
-                ax1.set_xlim(hist.index.min(), hist.index.max()) # Set limits to match price data range
+
+                # Generate tick locations for January 1st of each year represented in the data
+                years_in_data = annual_eps_for_plot.index.year.unique().sort_values()
+                yearly_ticks = [datetime(year, 1, 1) for year in years_in_data]
+
+                ax1.set_xticks(yearly_ticks)
+                ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+                # Ensure labels are centered visually
+                for label in ax1.get_xticklabels():
+                    label.set_horizontalalignment('center')
+
+                # Set x-axis limits to include some padding on both sides
+                padding_days = 180 # Roughly half a year on each side
+                start_date = hist.index.min() - pd.Timedelta(days=padding_days)
+                end_date = hist.index.max() + pd.Timedelta(days=padding_days)
+                ax1.set_xlim(start_date, end_date)
             else:
                 ax1.text(0.5, 0.5, 'Diluted EPS data not available', horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes, fontsize=12, color='red')
 
@@ -800,7 +827,7 @@ class StockAnalyzer:
             fig.suptitle(f'{short_name} Financial Metrics Over Last 10 Years')
             fig.tight_layout()
             fig.subplots_adjust(top=0.88)
-            fig.autofmt_xdate() # Auto-format to prevent labels from overlapping
+            # fig.autofmt_xdate() # Auto-format to prevent labels from overlapping - Removed to allow manual control of label alignment
             
             # Save plot to a BytesIO object and embed as base64 in HTML
             import io
