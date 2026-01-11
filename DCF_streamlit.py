@@ -131,6 +131,8 @@ def display_saved_analyses():
         try:
             selected_analysis_id = next(aid for label, aid in all_analyses_list if label == selected_label)
             st.session_state.selected_analysis = selected_analysis_id
+            # Ensure we stay on Performed Analyses tab when selecting
+            st.session_state.active_tab = "Performed Analyses"
             
             # Display selected analysis
             st.markdown("---")
@@ -219,6 +221,10 @@ def fetch_data(ticker, target_curr):
 
 if 'st_vals' not in st.session_state:
     st.session_state.st_vals = {"price": 168.4, "shares": 12700.0, "cash": 96000.0, "ebit": 154740.0, "debt": 22000.0}
+
+# Initialize tab state
+if 'active_tab' not in st.session_state:
+    st.session_state.active_tab = "New Analysis"
 
 with st.sidebar:
     st.header("1. Automatic Search")
@@ -401,6 +407,27 @@ if submitted:
             display_saved_analyses()
 else:
     # Show Performed Analyses tab even when no simulation is running
-    tab1, tab2 = st.tabs(["New Analysis", "Performed Analyses"])
-    with tab2:
+    # Use session state to maintain tab selection
+    tab_names = ["New Analysis", "Performed Analyses"]
+    
+    # Determine which tab to show based on session state
+    if st.session_state.active_tab == "Performed Analyses":
+        default_index = 1
+    else:
+        default_index = 0
+    
+    # Create tabs with radio buttons to maintain state
+    tab_selection = st.radio(
+        "Navigation",
+        options=tab_names,
+        index=default_index,
+        horizontal=True,
+        key="tab_selector"
+    )
+    
+    st.session_state.active_tab = tab_selection
+    
+    if tab_selection == "New Analysis":
+        st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
+    else:
         display_saved_analyses()
