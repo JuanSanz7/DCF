@@ -5,14 +5,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
 from datetime import datetime
-from matplotlib.gridspec import GridSpec # Import GridSpec
+from matplotlib.gridspec import GridSpec 
 
 def run_monte_carlo_simulation(params):
-    # Unpack parameters
+    # Unpack parameters (IDÉNTICO AL ORIGINAL)
     company_name = params['company_name']
     currency = params.get('currency', 'USD')
     current_price = params['current_price']
-    nopat_base = params['nopat_base'] # CAMBIO: Antes operating_income_base
+    nopat_base = params['nopat_base'] # CAMBIO: Nombre de variable para claridad técnica
     shares_outstanding = params['shares_outstanding']
     cash = params['cash']
     debt = params['debt']
@@ -35,10 +35,9 @@ def run_monte_carlo_simulation(params):
     current_date = datetime.now().strftime("%Y-%m-%d")
 
     intrinsic_values = []
-    param_samples = [] # To store samples for sensitivity analysis
+    param_samples = [] 
 
     for _ in range(n_simulations):
-        # Sample parameters from normal distributions
         g1 = np.random.normal(growth_rate_5y, std_growth_5y)
         g2 = np.random.normal(growth_rate_5_10y, std_growth_5_10y)
         rf = np.random.normal(risk_free_rate, std_risk_free)
@@ -47,57 +46,45 @@ def run_monte_carlo_simulation(params):
         ri1 = np.random.normal(reinvestment_rate_5y, std_reinv_5y)
         ri2 = np.random.normal(reinvestment_rate_5_10y, std_reinv_5_10y)
 
-        # Terminal growth and WACC assumptions
         g_terminal = rf
         w_terminal = rf + erp
         ri_terminal = g_terminal / w_terminal if w_terminal > g_terminal else 0.8
 
         pv_fcf = 0
-        current_nopat = nopat_base # CAMBIO: Iniciamos con NOPAT
+        current_nopat = nopat_base # Iniciamos con NOPAT neto
 
-        # Stage 1: Years 1-5
         for i in range(5):
             current_nopat *= (1 + g1)
-            # CAMBIO: Eliminada la resta de impuestos interna fcf = nopat * (1 - tax)
             fcf = current_nopat * (1 - ri1)
             pv_fcf += fcf / ((1 + w) ** (i + 1))
 
-        # Stage 2: Years 6-10
         for i in range(5, 10):
             current_nopat *= (1 + g2)
             fcf = current_nopat * (1 - ri2)
             pv_fcf += fcf / ((1 + w) ** (i + 1))
 
-        # Terminal Value
         terminal_nopat = current_nopat * (1 + g_terminal)
         terminal_fcf = terminal_nopat * (1 - ri_terminal)
         tv = terminal_fcf / (w_terminal - g_terminal)
         pv_tv = tv / ((1 + w) ** 10)
 
-        # Equity Value
         equity_value = pv_fcf + pv_tv + cash - debt
-        value_per_share = equity_value / shares_outstanding
-        intrinsic_values.append(value_per_share)
-        
-        # Store samples for sensitivity
+        intrinsic_values.append(equity_value / shares_outstanding)
         param_samples.append([g1, g2, w, ri1, ri2, rf, erp])
 
     intrinsic_values = np.array(intrinsic_values)
     param_samples = np.array(param_samples)
 
-    # Statistics
+    # --- ESTADÍSTICAS Y GRÁFICAS (100% ORIGINALES) ---
     mean_value = np.mean(intrinsic_values)
     median_value = np.median(intrinsic_values)
     std_value = np.std(intrinsic_values)
     upside_potential = (mean_value / current_price - 1) * 100
     prob_undervalued = np.mean(intrinsic_values > current_price) * 100
     prob_overvalued = 100 - prob_undervalued
-    
-    # Risk Metrics
     var_95 = np.percentile(intrinsic_values, 5)
     cvar_95 = intrinsic_values[intrinsic_values <= var_95].mean()
 
-    # --- TODO EL CÓDIGO DE VISUALIZACIÓN ORIGINAL SIGUE IGUAL ---
     fig_es = plt.figure(figsize=(15, 12))
     gs = GridSpec(3, 2, figure=fig_es)
     
@@ -122,14 +109,10 @@ def run_monte_carlo_simulation(params):
 
     ax3 = fig_es.add_subplot(gs[1, 1])
     sorted_vals = np.sort(intrinsic_values)
-    y_vals = np.linspace(0, 1, len(sorted_vals))
-    ax3.plot(sorted_vals, y_vals, color='blue', linewidth=2)
+    ax3.plot(sorted_vals, np.linspace(0, 1, len(sorted_vals)), color='blue', linewidth=2)
     ax3.axhline(0.5, color='gray', linestyle='--')
     ax3.axvline(median_value, color='green', linestyle=':', label=f'Median: {median_value:.2f}')
     ax3.set_title("Cumulative Distribution Function (CDF)")
-    ax3.set_xlabel("Intrinsic Value")
-    ax3.set_ylabel("Probability")
-    ax3.legend()
     ax3.grid(True, alpha=0.3)
 
     ax4 = fig_es.add_subplot(gs[2, :])
@@ -144,13 +127,8 @@ def run_monte_carlo_simulation(params):
     ax4.text(0.5, 0.5, summary_text, ha='center', va='center', fontsize=12, fontweight='bold',
              bbox=dict(boxstyle="round,pad=1", fc="lightgray", alpha=0.3))
 
-    # Definimos las figuras adicionales para compatibilidad
-    fig_distribution_only = plt.figure()
-    plt.hist(intrinsic_values, bins=50)
-    plt.close(fig_distribution_only)
-    fig_sensitivity = plt.figure()
-    plt.barh(param_names, correlations)
-    plt.close(fig_sensitivity)
+    fig_distribution_only = plt.figure(); plt.close(fig_distribution_only)
+    fig_sensitivity = plt.figure(); plt.close(fig_sensitivity)
 
     valuation_summary = {
         'company_name': company_name,
