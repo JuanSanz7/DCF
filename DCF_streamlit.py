@@ -427,8 +427,12 @@ else:
     # Use session state to maintain tab selection
     tab_names = ["New Analysis", "Performed Analyses"]
     
-    # Determine which tab to show based on session state
-    if st.session_state.active_tab == "Performed Analyses":
+    # If an analysis is selected, force to Performed Analyses tab
+    if st.session_state.get('selected_analysis'):
+        st.session_state.active_tab = "Performed Analyses"
+        default_index = 1
+    # Otherwise, use the stored active_tab state
+    elif st.session_state.active_tab == "Performed Analyses":
         default_index = 1
     else:
         default_index = 0
@@ -442,7 +446,13 @@ else:
         key="tab_selector"
     )
     
-    st.session_state.active_tab = tab_selection
+    # Update session state when tab changes (but don't override if analysis is selected)
+    if tab_selection != st.session_state.active_tab:
+        # Only update if no analysis is selected, or if user explicitly switches away
+        if not st.session_state.get('selected_analysis') or tab_selection == "New Analysis":
+            st.session_state.active_tab = tab_selection
+            if tab_selection == "New Analysis":
+                st.session_state.selected_analysis = None
     
     if tab_selection == "New Analysis":
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
