@@ -88,12 +88,13 @@ def display_saved_analyses():
     if 'selected_analysis' not in st.session_state:
         st.session_state.selected_analysis = None
     
-    # Display analyses organized by ticker
+    # Create a list of all analyses for selection
+    all_analyses_list = []
     for ticker in sorted(index.keys()):
         analyses = index[ticker]
         company_name = list(analyses.values())[0]['company_name']
         
-        with st.expander(f"📊 {ticker} - {company_name} ({len(analyses)} analysis{'es' if len(analyses) > 1 else ''})"):
+        with st.expander(f"📊 {ticker} - {company_name} ({len(analyses)} {'analyses' if len(analyses) > 1 else 'analysis'})"):
             # Sort analyses by timestamp (newest first)
             sorted_analyses = sorted(analyses.items(), key=lambda x: x[1]['timestamp'], reverse=True)
             
@@ -107,24 +108,47 @@ def display_saved_analyses():
                 except:
                     formatted_time = timestamp_str
                 
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.write(f"**Date:** {date_str} | **Time:** {formatted_time}")
-                with col2:
-                    if st.button(f"View", key=f"view_{analysis_id}"):
-                        st.session_state.selected_analysis = analysis_id
+                # Create display label
+                display_label = f"{ticker} - {date_str} {formatted_time}"
+                all_analyses_list.append((display_label, analysis_id))
+                
+                st.write(f"**Date:** {date_str} | **Time:** {formatted_time}")
     
-    # Display selected analysis
-    if st.session_state.selected_analysis:
+    # Display analysis selector
+    if all_analyses_list:
         st.markdown("---")
-        st.subheader("Selected Analysis")
-        display_analysis(st.session_state.selected_analysis)
+        st.subheader("Select Analysis to View")
+        selected_label = st.selectbox(
+            "Choose an analysis:",
+            options=[label for label, _ in all_analyses_list],
+            index=0 if not st.session_state.selected_analysis else next(
+                (i for i, (_, aid) in enumerate(all_analyses_list) if aid == st.session_state.selected_analysis), 0
+            ),
+            key="analysis_selector"
+        )
+        
+        # Get the analysis_id from the selected label
+        try:
+            selected_analysis_id = next(aid for label, aid in all_analyses_list if label == selected_label)
+            st.session_state.selected_analysis = selected_analysis_id
+            
+            # Display selected analysis
+            st.markdown("---")
+            st.subheader("Selected Analysis")
+            display_analysis(selected_analysis_id)
+        except StopIteration:
+            st.error("Selected analysis not found. Please try selecting again.")
 
 def display_analysis(analysis_id):
     """Display a saved analysis"""
     analysis = load_analysis(analysis_id)
     if not analysis:
-        st.error("Analysis not found.")
+        st.error(f"Analysis not found: {analysis_id}")
+        return
+    
+    # Verify files exist
+    if not Path(analysis['results_plot']).exists():
+        st.error(f"Results plot file not found for analysis: {analysis_id}")
         return
     
     valuation_summary = analysis['valuation_summary']
