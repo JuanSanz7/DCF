@@ -52,7 +52,11 @@ with st.sidebar.form("input_form"):
         operating_income_base = st.number_input("Operating Income Base (millions)", value=st.session_state.st_vals['ebit'])
         debt = st.number_input("Debt (millions)", value=st.session_state.st_vals['debt'])
         tax_rate = st.number_input("Tax Rate (%)", value=21.0) # NUEVO
-
+        
+    # Calculate and display implied NOPAT
+    nopat_implied = operating_income_base * (1 - tax_rate / 100)
+    st.info(f"**Implied NOPAT:** {nopat_implied:.2f} millions {target_currency} (Operating Income × (1 - Tax Rate))")
+    
     # TODOS LOS PARÁMETROS ORIGINALES
     st.header("Growth Parameters")
     growth_rate_5y = st.number_input("Growth Rate 5y (%)", value=15.0)
@@ -197,3 +201,4 @@ if submitted:
         plt.close(fig_es)
         plt.close(fig_distribution_only)
         plt.close(fig_sensitivity)
+
