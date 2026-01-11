@@ -36,6 +36,11 @@ def run_monte_carlo_simulation(params):
     
     # Calculate NOPAT from EBIT: NOPAT = EBIT * (1 - tax_rate)
     nopat_base = operating_income_base * (1 - tax_rate)
+    
+    # Calculate terminal value parameters using base values
+    terminal_growth_base = risk_free_rate
+    terminal_WACC_base = risk_free_rate + equity_risk_premium
+    terminal_reinv_rate_base = risk_free_rate / (risk_free_rate + equity_risk_premium) if (risk_free_rate + equity_risk_premium) > 0 else 0
 
     np.random.seed(42)
     params_simulated = {
@@ -202,9 +207,9 @@ def run_monte_carlo_simulation(params):
         f"Reinvestment 5y: {reinvestment_rate_5y*100:.1f}% (±{std_reinv_5y*100:.1f}%)\n"
         f"Reinvestment 5-10y: {reinvestment_rate_5_10y*100:.1f}% (±{std_reinv_5_10y*100:.1f}%)\n"
         f"\nTerminal Value Params:\n"
-        f"Term. Growth = RFR\n"
-        f"Term. WACC = RFR + ERP\n"
-        f"Term. Reinv Rate = TG / TWACC"
+        f"Term. Growth: {terminal_growth_base*100:.2f}%\n"
+        f"Term. WACC: {terminal_WACC_base*100:.2f}%\n"
+        f"Term. Reinv Rate: {terminal_reinv_rate_base*100:.2f}%"
     )
     left_lines = left_column.split('\n')
     right_lines = right_column.split('\n')
@@ -272,9 +277,9 @@ def run_monte_carlo_simulation(params):
             'Reinvestment 5-10y': f"{reinvestment_rate_5_10y*100:.1f}% (±{std_reinv_5_10y*100:.1f}%)"
         },
         'Terminal Value Params': {
-            'Term. Growth': 'RFR',
-            'Term. WACC': 'RFR + ERP',
-            'Term. Reinv Rate': 'TG / TWACC'
+            'Term. Growth': f"{terminal_growth_base*100:.2f}%",
+            'Term. WACC': f"{terminal_WACC_base*100:.2f}%",
+            'Term. Reinv Rate': f"{terminal_reinv_rate_base*100:.2f}%"
         }
     }
 
