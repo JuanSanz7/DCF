@@ -95,22 +95,105 @@ if submitted:
         'std_reinv_5_10y': std_reinv_5_10y/100, 'n_simulations': int(n_simulations)
     }
 
-    fig_es, fig_dist, fig_sens, valuation_summary = run_monte_carlo_simulation(params)
+    with st.spinner("Running Monte Carlo simulation..."):
+        fig_es, fig_distribution_only, fig_sensitivity, valuation_summary = run_monte_carlo_simulation(params)
+        st.success(f"Monte Carlo simulation for {company_name} completed successfully!")
 
-    # --- RENDERIZADO DE TABS ---
-    tab1, tab2 = st.tabs(["Results", "Summary"])
-    with tab1:
-        st.pyplot(fig_es)
-    with tab2:
-        col_dist, col_sum = st.columns([2, 1])
-        with col_dist:
-            st.pyplot(fig_dist)
-        with col_sum:
-            st.markdown(f"### Valuation: {valuation_summary['company_name']}")
-            st.write(f"**Mean Value:** {valuation_summary['mean_value']}")
-            st.write(f"**Upside:** {valuation_summary['upside_potential']}")
-            st.write(f"**Prob. Undervalued:** {valuation_summary['prob_undervalued']}")
-            st.markdown("---")
-            st.json(valuation_summary['Variable Parameters']) # Para no perder ningún dato
+        tab1, tab2 = st.tabs(["Results", "Summary"])
+        
+        with tab1:
+            # Removed Results header
+            st.pyplot(fig_es)
+            
+            # Add download button for the results plot
+            buf_es = io.BytesIO()
+            fig_es.savefig(buf_es, format="png")
+            st.download_button(
+                label="Download Results Plot",
+                data=buf_es.getvalue(),
+                file_name=f"{company_name}_results_plot.png",
+                mime="image/png"
+            )
 
-    plt.close('all')
+        with tab2:
+            # Use columns to display the distribution plot and the summary side-by-side
+            col1_dist, col2_summary = st.columns([2, 1]) # Adjust column ratios as needed
+            with col1_dist:
+                # Removed Intrinsic Value Distribution header
+                st.pyplot(fig_distribution_only)
+
+                # Add download button for the intrinsic value distribution plot in Summary tab
+                buf_dist_summary = io.BytesIO()
+                fig_distribution_only.savefig(buf_dist_summary, format="png")
+                st.download_button(
+                    label="Download Intrinsic Value Distribution Plot",
+                    data=buf_dist_summary.getvalue(),
+                    file_name=f"{company_name}_intrinsic_value_distribution_summary_plot.png",
+                    mime="image/png"
+                )
+
+            with col2_summary:
+                st.markdown("""
+                    <style>
+                    .summary-text {
+                        font-size: 0.9em;
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
+                
+                # Centered header for the Valuation Summary
+                st.markdown("<h3 style='text-align: center;'>Valuation Summary</h3>", unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                    <div class="summary-text">
+                    <p><strong>Company:</strong> {valuation_summary['company_name']}<br>
+                    <strong>Date:</strong> {valuation_summary['date']}<br>
+                    <strong>-------------------</strong></p>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Create two columns for the summary content
+                sum_col1, sum_col2 = st.columns(2)
+                
+                with sum_col1:
+                    st.markdown(f"""
+                        <div class="summary-text">
+                        <p><strong>Current Price:</strong> {valuation_summary['current_price']}<br>
+                        <strong>Mean Value:</strong> {valuation_summary['mean_value']}<br>
+                        <strong>Median Value:</strong> {valuation_summary['median_value']}<br>
+                        <strong>Upside Potential:</strong> {valuation_summary['upside_potential']}</p>
+                        
+                        <p><strong>Probabilities:</strong><br>
+                        Overvaluation: {valuation_summary['prob_overvalued']}<br>
+                        Undervaluation: {valuation_summary['prob_undervalued']}</p>
+                        
+                        <p><strong>Risk Metrics:</strong><br>
+                        VaR 95%: {valuation_summary['VaR 95%']}<br>
+                        CVaR 95%: {valuation_summary['CVaR 95%']}<br>
+                        Std. Deviation: {valuation_summary['Std. Deviation']}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                with sum_col2:
+                    st.markdown(f"""
+                        <div class="summary-text">
+                        <p><strong>Variable Parameters:</strong><br>
+                        Growth 5y: {valuation_summary['Variable Parameters']['Growth 5y']}<br>
+                        Growth 5-10y: {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>
+                        WACC: {valuation_summary['Variable Parameters']['WACC']}<br>
+                        Risk Premium: {valuation_summary['Variable Parameters']['Risk Premium']}<br>
+                        Risk Free Rate: {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>
+                        Reinvestment 5y: {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
+                        Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
+                        
+                        <p><strong>Terminal Value Params:</strong><br>
+                        Term. Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
+                        Term. WACC: {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
+                        Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+        # Close the plot figures to free up memory
+        plt.close(fig_es)
+        plt.close(fig_distribution_only)
+        plt.close(fig_sensitivity)
