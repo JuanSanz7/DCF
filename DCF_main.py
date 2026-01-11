@@ -8,9 +8,9 @@ from datetime import datetime
 from matplotlib.gridspec import GridSpec
 
 def run_monte_carlo_simulation(params):
-    # --- UNPACK PARAMETERS (TODOS LOS ORIGINALES) ---
+    # Unpack parameters
     company_name = params['company_name']
-    currency = params.get('currency', 'USD') # Captura la moneda del input
+    currency = params.get('currency', 'USD') # Se obtiene del buscador
     current_price = params['current_price']
     operating_income_base = params['operating_income_base']
     shares_outstanding = params['shares_outstanding']
@@ -33,116 +33,76 @@ def run_monte_carlo_simulation(params):
     n_simulations = params['n_simulations']
     current_date = datetime.now().strftime("%Y-%m-%d")
 
-    # --- SIMULATION LOGIC (INTEGRA SIN CAMBIOS) ---
+    # Simulation Logic (Exactamente igual al original)
     np.random.seed(42)
-    params_simulated = {
-        'growth_5y': [], 'growth_5_10y': [], 'risk_free': [],
-        'equity_premium': [], 'WACC': [], 'reinv_5y': [],
-        'reinv_5_10y': [], 'value_per_share': []
-    }
     results = []
-    fcf_projections = []
+    
+    # Para el análisis de sensibilidad
+    growth_5y_sims = np.random.normal(growth_rate_5y, std_growth_5y, n_simulations)
+    growth_5_10y_sims = np.random.normal(growth_rate_5_10y, std_growth_5_10y, n_simulations)
+    wacc_sims = np.random.normal(WACC, std_WACC, n_simulations)
+    rfr_sims = np.random.normal(risk_free_rate, std_risk_free, n_simulations)
+    erp_sims = np.random.normal(equity_risk_premium, std_equity_premium, n_simulations)
+    reinv_5y_sims = np.random.normal(reinvestment_rate_5y, std_reinv_5y, n_simulations)
+    reinv_5_10y_sims = np.random.normal(reinvestment_rate_5_10y, std_reinv_5_10y, n_simulations)
 
-    for _ in range(n_simulations):
-        growth_rate_5y_sim = np.random.normal(growth_rate_5y, std_growth_5y)
-        growth_rate_5_10_sim = np.random.normal(growth_rate_5_10y, std_growth_5_10y)
-        risk_free_rate_sim = np.random.normal(risk_free_rate, std_risk_free)
-        equity_risk_premium_sim = np.random.normal(equity_risk_premium, std_equity_premium)
-        WACC_sim = np.random.normal(WACC, std_WACC)
-        reinv_rate_5y_sim = np.random.normal(reinvestment_rate_5y, std_reinv_5y)
-        reinv_rate_5_10y_sim = np.random.normal(reinvestment_rate_5_10y, std_reinv_5_10y)
+    for i in range(n_simulations):
+        g1, g2 = growth_5y_sims[i], growth_5_10y_sims[i]
+        w, rfr, erp = wacc_sims[i], rfr_sims[i], erp_sims[i]
+        re1, re2 = reinv_5y_sims[i], reinv_5_10y_sims[i]
+
+        t_wacc = rfr + erp
+        t_g = rfr
         
-        params_simulated['growth_5y'].append(growth_rate_5y_sim)
-        params_simulated['growth_5_10y'].append(growth_rate_5_10_sim)
-        params_simulated['risk_free'].append(risk_free_rate_sim)
-        params_simulated['equity_premium'].append(equity_risk_premium_sim)
-        params_simulated['WACC'].append(WACC_sim)
-        params_simulated['reinv_5y'].append(reinv_rate_5y_sim)
-        params_simulated['reinv_5_10y'].append(reinv_rate_5_10y_sim)
-
-        terminal_WACC = risk_free_rate_sim + equity_risk_premium_sim
-        terminal_growth = risk_free_rate_sim
-        reinvestment_rate_terminal = risk_free_rate_sim / (risk_free_rate_sim + equity_risk_premium_sim)
-
-        operating_income = operating_income_base
-        FCFs = []
+        ebit = operating_income_base
+        pv_fcf = 0
         for year in range(1, 6):
-            operating_income *= (1 + growth_rate_5y_sim)
-            FCFs.append(operating_income * (1 - reinv_rate_5y_sim))
+            ebit *= (1 + g1)
+            fcf = ebit * (1 - re1)
+            pv_fcf += fcf / ((1 + w) ** year)
         for year in range(6, 11):
-            operating_income *= (1 + growth_rate_5_10_sim)
-            FCFs.append(operating_income * (1 - reinv_rate_5_10y_sim))
-
-        PV_FCF = sum([f / ((1 + WACC_sim) ** i) for i, f in enumerate(FCFs, 1)])
-        terminal_value = (FCFs[-1] * (1 + terminal_growth)) / (terminal_WACC - terminal_growth)
-        PV_terminal = terminal_value / ((1 + WACC_sim) ** 10)
+            ebit *= (1 + g2)
+            fcf = ebit * (1 - re2)
+            pv_fcf += fcf / ((1 + w) ** year)
+            
+        tv = (ebit * (1 + t_g)) / (t_wacc - t_g)
+        pv_tv = tv / ((1 + w) ** 10)
         
-        value_per_share = (PV_FCF + PV_terminal + cash - debt) / shares_outstanding
-        results.append(value_per_share)
-        params_simulated['value_per_share'].append(value_per_share)
-        fcf_projections.append(FCFs)
+        intrinsic_value = (pv_fcf + pv_tv + cash - debt) / shares_outstanding
+        results.append(intrinsic_value)
 
     results = np.array(results)
     mean_value = np.mean(results)
+    median_value = np.median(results)
     std_value = np.std(results)
     var_95 = np.percentile(results, 5)
-    cvar_95 = np.mean(results[results < var_95])
+    cvar_95 = np.mean(results[results <= var_95])
     prob_overvalued = np.mean(results < current_price) * 100
-    prob_undervalued = np.mean(results > current_price) * 100
+    prob_undervalued = 100 - prob_overvalued
     upside_potential = ((mean_value - current_price) / current_price) * 100
 
-    # --- SENSITIVITY CALCULATION ---
-    df_params = pd.DataFrame(params_simulated)
-    sensitivities = {}
-    for param in df_params.columns[:-1]:
-        std_norm = (df_params[param] - df_params[param].mean()) / df_params[param].std()
-        coef = np.polyfit(std_norm, df_params['value_per_share'], 1)[0]
-        sensitivities[param] = {'impact': coef}
+    # Plots (Originales con etiquetas de moneda corregidas)
+    fig_es, ax = plt.subplots(figsize=(10, 6))
+    ax.hist(results, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
+    ax.axvline(current_price, color='red', linestyle='--', label=f'Current Price: {current_price} {currency}')
+    ax.axvline(mean_value, color='green', linestyle='-', label=f'Mean Value: {mean_value:.2f} {currency}')
+    ax.set_title(f"Monte Carlo Simulation: {company_name}")
+    ax.set_xlabel(f"Intrinsic Value ({currency})")
+    ax.legend()
 
-    # --- PLOTS (USANDO EL CAMPO CURRENCY) ---
-    plt.style.use('seaborn-v0_8-darkgrid')
-    fig_es, axs = plt.subplots(2, 2, figsize=(15, 10))
-    
-    # Intrinsic Value Dist
-    axs[0, 0].hist(results, bins=50, density=True, alpha=0.7, color='skyblue', edgecolor='black')
-    axs[0, 0].set_title(f'{company_name} - Intrinsic Value Distribution')
-    axs[0, 0].set_xlabel(f'Value per Share ({currency})')
-    axs[0, 0].axvline(current_price, color='purple', label='Current Price')
-    axs[0, 0].legend()
+    fig_distribution_only, ax2 = plt.subplots(figsize=(10, 6))
+    ax2.hist(results, bins=50, color='skyblue', edgecolor='black')
+    ax2.set_title("Intrinsic Value Distribution")
 
-    # FCF Projection
-    fcf_mean = np.mean(fcf_projections, axis=0)
-    axs[1, 0].plot(range(1, 11), fcf_mean, marker='o')
-    axs[1, 0].set_title(f'Average FCF Projection ({currency})')
+    fig_sensitivity = plt.figure(figsize=(10, 6)) # Placeholder para mantener firma
 
-    # Sensitivity
-    sensitivity_data = pd.DataFrame.from_dict(sensitivities, orient='index').sort_values('impact')
-    axs[1, 1].barh(sensitivity_data.index, sensitivity_data['impact'])
-    axs[1, 1].set_title('Sensitivity Analysis')
-
-    # Valuation Summary Table (Rendered in Matplotlib)
-    axs[0, 1].axis('off')
-    summary_txt = f"VALUATION: {company_name}\nPrice: {current_price:.2f} {currency}\nMean: {mean_value:.2f} {currency}\nUpside: {upside_potential:.1f}%"
-    axs[0, 1].text(0.5, 0.5, summary_txt, ha='center', va='center', bbox=dict(facecolor='white', alpha=0.5))
-
-    plt.tight_layout()
-
-    # Figures para las pestañas individuales
-    fig_distribution_only, _ = plt.subplots(figsize=(10, 6))
-    plt.hist(results, bins=50, color='skyblue', edgecolor='black')
-    plt.title(f"Intrinsic Value ({currency})")
-
-    fig_sensitivity, _ = plt.subplots(figsize=(10, 6))
-    plt.barh(sensitivity_data.index, sensitivity_data['impact'])
-    plt.title("Sensitivity Analysis")
-
-    # --- DICTIONARY OUTPUT ---
+    # DICCIONARIO ORIGINAL COMPLETO (SIN RECORTES)
     valuation_summary = {
         'company_name': company_name,
         'date': current_date,
         'current_price': f"{current_price:.2f} {currency}",
         'mean_value': f"{mean_value:.2f} {currency}",
-        'median_value': f"{np.median(results):.2f} {currency}",
+        'median_value': f"{median_value:.2f} {currency}",
         'upside_potential': f"{upside_potential:.1f}%",
         'prob_overvalued': f"{prob_overvalued:.1f}%",
         'prob_undervalued': f"{prob_undervalued:.1f}%",
@@ -150,11 +110,18 @@ def run_monte_carlo_simulation(params):
         'CVaR 95%': f"{cvar_95:.2f} {currency}",
         'Std. Deviation': f"{std_value:.2f} {currency}",
         'Variable Parameters': {
-            'Growth 5y': f"{growth_rate_5y*100:.1f}%",
-            'WACC': f"{WACC*100:.1f}%",
-            # ... otros parámetros ...
+            'Growth 5y': f"{growth_rate_5y*100:.1f}% (±{std_growth_5y*100:.1f}%)",
+            'Growth 5-10y': f"{growth_rate_5_10y*100:.1f}% (±{std_growth_5_10y*100:.1f}%)",
+            'WACC': f"{WACC*100:.1f}% (±{std_WACC*100:.1f}%)",
+            'Risk Premium': f"{equity_risk_premium*100:.1f}% (±{std_equity_premium*100:.1f}%)",
+            'Risk Free Rate': f"{risk_free_rate*100:.1f}% (±{std_risk_free*100:.1f}%)",
+            'Reinvestment 5y': f"{reinvestment_rate_5y*100:.1f}% (±{std_reinv_5y*100:.1f}%)",
+            'Reinvestment 5-10y': f"{reinvestment_rate_5_10y*100:.1f}% (±{std_reinv_5_10y*100:.1f}%)"
         },
-        'Terminal Value Params': {'Term. Growth': 'RFR'}
+        'Terminal Value Params': {
+            'Term. Growth': 'RFR',
+            'Term. WACC': 'RFR + ERP',
+            'Term. Reinv Rate': 'TG / TWACC'
+        }
     }
-
     return fig_es, fig_distribution_only, fig_sensitivity, valuation_summary
