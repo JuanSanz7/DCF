@@ -4,6 +4,7 @@ import io
 import yfinance as yf
 import json
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from DCF_main import run_monte_carlo_simulation
@@ -74,6 +75,31 @@ def load_analysis(analysis_id):
         'results_plot': results_plot_path
     }
 
+def delete_analysis(analysis_id):
+    """Delete an analysis from disk and index"""
+    index = load_analyses_index()
+    
+    # Find and remove from index
+    for ticker in list(index.keys()):
+        if analysis_id in index[ticker]:
+            del index[ticker][analysis_id]
+            # Remove ticker entry if no analyses left
+            if not index[ticker]:
+                del index[ticker]
+            break
+    
+    # Save updated index
+    save_analyses_index(index)
+    
+    # Delete analysis directory
+    analysis_dir = ANALYSES_DIR / analysis_id
+    if analysis_dir.exists():
+        shutil.rmtree(analysis_dir)
+    
+    # Clear selected analysis if it was the deleted one
+    if st.session_state.get('selected_analysis') == analysis_id:
+        st.session_state.selected_analysis = None
+
 def display_saved_analyses():
     """Display the saved analyses organized by ticker"""
     st.header("Performed Analyses")
@@ -88,8 +114,13 @@ def display_saved_analyses():
     if 'selected_analysis' not in st.session_state:
         st.session_state.selected_analysis = None
     
-    # Create a list of all analyses for selection
-    all_analyses_list = []
+    # Check if an analysis was deleted
+    if 'delete_analysis_id' in st.session_state:
+        delete_analysis(st.session_state.delete_analysis_id)
+        del st.session_state.delete_analysis_id
+        st.rerun()
+    
+    # Display analyses organized by ticker with View and Delete buttons
     for ticker in sorted(index.keys()):
         analyses = index[ticker]
         company_name = list(analyses.values())[0]['company_name']
@@ -108,38 +139,24 @@ def display_saved_analyses():
                 except:
                     formatted_time = timestamp_str
                 
-                # Create display label
-                display_label = f"{ticker} - {date_str} {formatted_time}"
-                all_analyses_list.append((display_label, analysis_id))
-                
-                st.write(f"**Date:** {date_str} | **Time:** {formatted_time}")
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.write(f"**Date:** {date_str} | **Time:** {formatted_time}")
+                with col2:
+                    if st.button("View", key=f"view_{analysis_id}"):
+                        st.session_state.selected_analysis = analysis_id
+                        st.session_state.active_tab = "Performed Analyses"
+                        st.rerun()
+                with col3:
+                    if st.button("🗑️ Delete", key=f"delete_{analysis_id}"):
+                        st.session_state.delete_analysis_id = analysis_id
+                        st.rerun()
     
-    # Display analysis selector
-    if all_analyses_list:
+    # Display selected analysis
+    if st.session_state.selected_analysis:
         st.markdown("---")
-        st.subheader("Select Analysis to View")
-        selected_label = st.selectbox(
-            "Choose an analysis:",
-            options=[label for label, _ in all_analyses_list],
-            index=0 if not st.session_state.selected_analysis else next(
-                (i for i, (_, aid) in enumerate(all_analyses_list) if aid == st.session_state.selected_analysis), 0
-            ),
-            key="analysis_selector"
-        )
-        
-        # Get the analysis_id from the selected label
-        try:
-            selected_analysis_id = next(aid for label, aid in all_analyses_list if label == selected_label)
-            st.session_state.selected_analysis = selected_analysis_id
-            # Ensure we stay on Performed Analyses tab when selecting
-            st.session_state.active_tab = "Performed Analyses"
-            
-            # Display selected analysis
-            st.markdown("---")
-            st.subheader("Selected Analysis")
-            display_analysis(selected_analysis_id)
-        except StopIteration:
-            st.error("Selected analysis not found. Please try selecting again.")
+        st.subheader("Selected Analysis")
+        display_analysis(st.session_state.selected_analysis)
 
 def display_analysis(analysis_id):
     """Display a saved analysis"""
