@@ -35,10 +35,8 @@ def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribut
     analysis_dir = ANALYSES_DIR / analysis_id
     analysis_dir.mkdir(exist_ok=True)
     
-    # Save plots as images
+    # Save only the results plot
     fig_es.savefig(analysis_dir / "results_plot.png", dpi=150, bbox_inches='tight')
-    fig_distribution_only.savefig(analysis_dir / "distribution_plot.png", dpi=150, bbox_inches='tight')
-    fig_sensitivity.savefig(analysis_dir / "sensitivity_plot.png", dpi=150, bbox_inches='tight')
     
     # Save valuation summary as JSON
     with open(analysis_dir / "valuation_summary.json", 'w') as f:
@@ -68,16 +66,12 @@ def load_analysis(analysis_id):
     with open(analysis_dir / "valuation_summary.json", 'r') as f:
         valuation_summary = json.load(f)
     
-    # Load plot images
+    # Load results plot
     results_plot_path = analysis_dir / "results_plot.png"
-    distribution_plot_path = analysis_dir / "distribution_plot.png"
-    sensitivity_plot_path = analysis_dir / "sensitivity_plot.png"
     
     return {
         'valuation_summary': valuation_summary,
-        'results_plot': results_plot_path,
-        'distribution_plot': distribution_plot_path,
-        'sensitivity_plot': sensitivity_plot_path
+        'results_plot': results_plot_path
     }
 
 def display_saved_analyses():
@@ -135,14 +129,8 @@ def display_analysis(analysis_id):
     
     valuation_summary = analysis['valuation_summary']
     
-    # Display plots
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(str(analysis['results_plot']), caption="Results Plot", use_container_width=True)
-    with col2:
-        st.image(str(analysis['distribution_plot']), caption="Distribution Plot", use_container_width=True)
-    
-    st.image(str(analysis['sensitivity_plot']), caption="Sensitivity Analysis", use_container_width=True)
+    # Display results plot
+    st.image(str(analysis['results_plot']), caption="Results Plot", use_container_width=True)
     
     # Display summary
     st.markdown("### Valuation Summary")
