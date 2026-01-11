@@ -146,6 +146,8 @@ def display_saved_analyses():
                     if st.button("View", key=f"view_{analysis_id}"):
                         st.session_state.selected_analysis = analysis_id
                         st.session_state.active_tab = "Performed Analyses"
+                        # Set query param to persist tab selection
+                        st.query_params.tab = "performed"
                         st.rerun()
                 with col3:
                     if st.button("🗑️ Delete", key=f"delete_{analysis_id}"):
@@ -424,11 +426,28 @@ if submitted:
             display_saved_analyses()
 else:
     # Show Performed Analyses tab even when no simulation is running
-    # Use session state to maintain tab selection
+    # Use query params and session state to maintain tab selection
     tab_names = ["New Analysis", "Performed Analyses"]
     
-    # If an analysis is selected, force to Performed Analyses tab
+    # Check query params first (most reliable for persistence)
+    query_tab = None
+    if "tab" in st.query_params:
+        tab_param = st.query_params.get("tab")
+        query_tab = tab_param[0] if isinstance(tab_param, list) else tab_param
+    
+    # PRIORITY: If an analysis is selected, ALWAYS force to Performed Analyses tab
+    # This must be checked FIRST before any other logic
     if st.session_state.get('selected_analysis'):
+        st.session_state.active_tab = "Performed Analyses"
+        if query_tab != "performed":
+            st.query_params.tab = "performed"
+        # Force the radio button to use Performed Analyses by clearing its state
+        if 'tab_selector' in st.session_state:
+            # Reset the radio button state to force it to use our index
+            del st.session_state.tab_selector
+        default_index = 1
+    # Check query params
+    elif query_tab == "performed":
         st.session_state.active_tab = "Performed Analyses"
         default_index = 1
     # Otherwise, use the stored active_tab state
@@ -436,22 +455,38 @@ else:
         default_index = 1
     else:
         default_index = 0
+        if st.session_state.active_tab != "New Analysis":
+            st.session_state.active_tab = "New Analysis"
     
     # Create tabs with radio buttons to maintain state
-    tab_selection = st.radio(
-        "Navigation",
-        options=tab_names,
-        index=default_index,
-        horizontal=True,
-        key="tab_selector"
-    )
+    # If selected_analysis exists, force the value to "Performed Analyses"
+    if st.session_state.get('selected_analysis'):
+        # Force the radio to show Performed Analyses
+        tab_selection = st.radio(
+            "Navigation",
+            options=tab_names,
+            index=1,  # Force index 1
+            horizontal=True,
+            key="tab_selector"
+        )
+    else:
+        tab_selection = st.radio(
+            "Navigation",
+            options=tab_names,
+            index=default_index,
+            horizontal=True,
+            key="tab_selector"
+        )
     
-    # Update session state when tab changes (but don't override if analysis is selected)
+    # Update session state and query params when tab changes
     if tab_selection != st.session_state.active_tab:
-        # Only update if no analysis is selected, or if user explicitly switches away
-        if not st.session_state.get('selected_analysis') or tab_selection == "New Analysis":
-            st.session_state.active_tab = tab_selection
-            if tab_selection == "New Analysis":
+        st.session_state.active_tab = tab_selection
+        if tab_selection == "Performed Analyses":
+            st.query_params.tab = "performed"
+        else:
+            st.query_params.tab = "new"
+            # Clear selected analysis when switching to New Analysis
+            if 'selected_analysis' in st.session_state:
                 st.session_state.selected_analysis = None
     
     if tab_selection == "New Analysis":
