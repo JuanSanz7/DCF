@@ -7,11 +7,11 @@ from DCF_main import run_monte_carlo_simulation
 st.set_page_config(page_title="DCF Monte Carlo Valuation Tool", layout="wide")
 st.title("DCF Monte Carlo Valuation Tool")
 
-# Función para obtener datos financieros
+# Función para obtener datos financieros automáticamente
 @st.cache_data
-def fetch_financials(ticker):
+def fetch_stock_data(ticker_symbol):
     try:
-        tk = yf.Ticker(ticker)
+        tk = yf.Ticker(ticker_symbol)
         info = tk.info
         return {
             "price": info.get("currentPrice", 168.4),
@@ -26,29 +26,29 @@ def fetch_financials(ticker):
 with st.sidebar.form("input_form"):
     st.header("Search & Auto-fill")
     ticker_input = st.text_input("Ticker Symbol", value="GOOGL").upper()
-    fetch_button = st.form_submit_button("Fetch Financial Data")
+    fetch_btn = st.form_submit_button("Fetch Financial Data")
     
     # Obtener datos si se pulsa el botón
-    fetched_data = fetch_financials(ticker_input) if fetch_button else None
+    s = fetch_stock_data(ticker_input) if fetch_btn else None
 
     st.header("Company Information")
     col1, col2 = st.columns(2)
     with col1:
         company_name = st.text_input("Company Name", value=ticker_input)
     with col2:
-        currency = st.text_input("Currency", value=fetched_data['currency'] if fetched_data else "USD")
+        currency = st.text_input("Currency", value=s['currency'] if s else "USD")
 
     st.header("Financial Information")
     col1, col2 = st.columns(2)
     with col1:
-        current_price = st.number_input("Current Price", value=fetched_data['price'] if fetched_data else 168.4)
-        shares_outstanding = st.number_input("Shares Outstanding (millions)", value=fetched_data['shares'] if fetched_data else 12700.00)
-        cash = st.number_input("Cash (millions)", value=fetched_data['cash'] if fetched_data else 96000.00)
+        current_price = st.number_input("Current Price", value=s['price'] if s else 168.4)
+        shares_outstanding = st.number_input("Shares Outstanding (millions)", value=s['shares'] if s else 12700.00)
+        cash = st.number_input("Cash (millions)", value=s['cash'] if s else 96000.00)
     with col2:
-        operating_income_base = st.number_input("Operating Income Base (millions)", value=fetched_data['ebit'] if fetched_data else 154740.00)
-        debt = st.number_input("Debt (millions)", value=fetched_data['debt'] if fetched_data else 22000.00)
+        operating_income_base = st.number_input("Operating Income Base (millions)", value=s['ebit'] if s else 154740.00)
+        debt = st.number_input("Debt (millions)", value=s['debt'] if s else 22000.00)
 
-    # --- EL RESTO DEL FORMULARIO SIGUE 100% IGUAL AL ORIGINAL ---
+    # --- RESTO DEL FORMULARIO SIN CAMBIOS ---
     st.header("Growth Parameters")
     col1, col2 = st.columns(2)
     with col1: growth_rate_5y = st.number_input("Growth Rate 5y (%)", value=15.0)
@@ -79,11 +79,13 @@ with st.sidebar.form("input_form"):
         std_reinv_5_10y = st.number_input("Std Reinv 5-10y (%)", value=5.0)
 
     st.header("Simulation Parameters")
-    n_simulations = st.number_input("Number of Simulations", value=10000, step=1000)
+    col1, col2 = st.columns(2)
+    with col1: n_simulations = st.number_input("Number of Simulations", value=10000, step=1000)
+    with col2: pass
+
     submitted = st.form_submit_button("Run Monte Carlo Simulation")
 
 if submitted:
-    # Mapeo de parámetros original
     params = {
         'company_name': company_name, 'currency': currency, 'current_price': current_price,
         'operating_income_base': operating_income_base, 'shares_outstanding': shares_outstanding,
@@ -96,23 +98,37 @@ if submitted:
         'std_WACC': std_WACC / 100, 'std_reinv_5y': std_reinv_5y / 100, 'std_reinv_5_10y': std_reinv_5_10y / 100,
         'n_simulations': int(n_simulations)
     }
-
     with st.spinner("Running Monte Carlo simulation..."):
-        fig_es, fig_dist, fig_sens, valuation_summary = run_monte_carlo_simulation(params)
-        
+        fig_es, fig_distribution_only, fig_sensitivity, valuation_summary = run_monte_carlo_simulation(params)
+        st.success(f"Monte Carlo simulation for {company_name} completed successfully!")
+
         tab1, tab2 = st.tabs(["Results", "Summary"])
+        
         with tab1:
             st.pyplot(fig_es)
-            # Lógica de descarga original
-            buf = io.BytesIO()
-            fig_es.savefig(buf, format="png")
-            st.download_button("Download Results Plot", buf.getvalue(), f"{company_name}_results.png", "image/png")
+            buf_es = io.BytesIO()
+            fig_es.savefig(buf_es, format="png")
+            st.download_button(label="Download Results Plot", data=buf_es.getvalue(), file_name=f"{company_name}_results_plot.png", mime="image/png")
 
         with tab2:
-            # Estructura de columnas y HTML original del archivo subido
-            c1, c2 = st.columns([2, 1])
-            with c1: st.pyplot(fig_dist)
-            with c2:
+            # BLOQUE RESUMEN HTML/CSS (VERBATIM DEL ORIGINAL)
+            col1_dist, col2_summary = st.columns([2, 1]) 
+            with col1_dist:
+                st.pyplot(fig_distribution_only)
+                buf_dist_summary = io.BytesIO()
+                fig_distribution_only.savefig(buf_dist_summary, format="png")
+                st.download_button(label="Download Intrinsic Value Distribution Plot", data=buf_dist_summary.getvalue(), file_name=f"{company_name}_intrinsic_value_distribution_summary_plot.png", mime="image/png")
+
+            with col2_summary:
+                st.markdown("""<style>.summary-text { font-size: 0.9em; }</style>""", unsafe_allow_html=True)
                 st.markdown("<h3 style='text-align: center;'>Valuation Summary</h3>", unsafe_allow_html=True)
-                # Aquí iría el bloque st.markdown con el CSS y los datos del summary original...
-                # He mantenido toda la lógica de visualización que tenías en tab2.
+                st.markdown(f"""<div class="summary-text"><p><strong>Company:</strong> {valuation_summary['company_name']}<br><strong>Date:</strong> {valuation_summary['date']}<br><strong>-------------------</strong></p></div>""", unsafe_allow_html=True)
+                sum_col1, sum_col2 = st.columns(2)
+                with sum_col1:
+                    st.markdown(f"""<div class="summary-text"><p><strong>Current Price:</strong> {valuation_summary['current_price']}<br><strong>Mean Value:</strong> {valuation_summary['mean_value']}<br><strong>Median Value:</strong> {valuation_summary['median_value']}<br><strong>Upside Potential:</strong> {valuation_summary['upside_potential']}</p><p><strong>Probabilities:</strong><br>Overvaluation: {valuation_summary['prob_overvalued']}<br>Undervaluation: {valuation_summary['prob_undervalued']}</p><p><strong>Risk Metrics:</strong><br>VaR 95%: {valuation_summary['VaR 95%']}<br>CVaR 95%: {valuation_summary['CVaR 95%']}<br>Std. Deviation: {valuation_summary['Std. Deviation']}</p></div>""", unsafe_allow_html=True)
+                with sum_col2:
+                    st.markdown(f"""<div class="summary-text"><p><strong>Variable Parameters:</strong><br>Growth 5y: {valuation_summary['Variable Parameters']['Growth 5y']}<br>Growth 5-10y: {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>WACC: {valuation_summary['Variable Parameters']['WACC']}<br>Risk Premium: {valuation_summary['Variable Parameters']['Risk Premium']}<br>Risk Free Rate: {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>Reinvestment 5y: {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p><p><strong>Terminal Value Params:</strong><br>Term. Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>Term. WACC: {valuation_summary['Terminal Value Params']['Term. WACC']}<br>Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p></div>""", unsafe_allow_html=True)
+
+        plt.close(fig_es)
+        plt.close(fig_distribution_only)
+        plt.close(fig_sensitivity)
