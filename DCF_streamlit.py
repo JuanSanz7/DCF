@@ -148,6 +148,10 @@ def display_saved_analyses():
                         st.session_state.active_tab = "Performed Analyses"
                         # Set query param to persist tab selection
                         st.query_params.tab = "performed"
+                        # Clear the radio button state to force it to use our index on rerun
+                        # This is critical when viewing from within a newly submitted analysis
+                        if 'tab_selector' in st.session_state:
+                            del st.session_state.tab_selector
                         st.rerun()
                 with col3:
                     if st.button("🗑️ Delete", key=f"delete_{analysis_id}"):
@@ -299,7 +303,11 @@ with st.sidebar.form("input_form"):
     n_simulations = st.number_input("Simulations", value=10000)
     submitted = st.form_submit_button("Run Simulation")
 
-if submitted:
+# If an analysis is selected for viewing, force to else block for proper tab handling
+# This ensures consistent behavior whether coming from a new analysis or directly
+viewing_analysis = st.session_state.get('selected_analysis') and not submitted
+
+if submitted and not viewing_analysis:
     params = {
         'company_name': company_name, 'currency': target_currency,
         'current_price': current_price, 'shares_outstanding': shares_outstanding,
@@ -493,3 +501,4 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
