@@ -2,10 +2,189 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import io
 import yfinance as yf
+import json
+import os
+from datetime import datetime
+from pathlib import Path
 from DCF_main import run_monte_carlo_simulation
 
 st.set_page_config(page_title="DCF Monte Carlo Valuation Tool", layout="wide")
 st.title("DCF Monte Carlo Valuation Tool")
+
+# --- ANALYSIS STORAGE FUNCTIONS ---
+ANALYSES_DIR = Path("saved_analyses")
+ANALYSES_DIR.mkdir(exist_ok=True)
+ANALYSES_INDEX_FILE = ANALYSES_DIR / "analyses_index.json"
+
+def load_analyses_index():
+    """Load the index of all saved analyses"""
+    if ANALYSES_INDEX_FILE.exists():
+        with open(ANALYSES_INDEX_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def save_analyses_index(index):
+    """Save the index of all analyses"""
+    with open(ANALYSES_INDEX_FILE, 'w') as f:
+        json.dump(index, f, indent=2)
+
+def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribution_only, fig_sensitivity):
+    """Save an analysis to disk"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    analysis_id = f"{ticker}_{timestamp}"
+    analysis_dir = ANALYSES_DIR / analysis_id
+    analysis_dir.mkdir(exist_ok=True)
+    
+    # Save plots as images
+    fig_es.savefig(analysis_dir / "results_plot.png", dpi=150, bbox_inches='tight')
+    fig_distribution_only.savefig(analysis_dir / "distribution_plot.png", dpi=150, bbox_inches='tight')
+    fig_sensitivity.savefig(analysis_dir / "sensitivity_plot.png", dpi=150, bbox_inches='tight')
+    
+    # Save valuation summary as JSON
+    with open(analysis_dir / "valuation_summary.json", 'w') as f:
+        json.dump(valuation_summary, f, indent=2)
+    
+    # Update index
+    index = load_analyses_index()
+    if ticker not in index:
+        index[ticker] = {}
+    index[ticker][analysis_id] = {
+        'company_name': company_name,
+        'timestamp': timestamp,
+        'date': valuation_summary['date'],
+        'analysis_id': analysis_id,
+        'path': str(analysis_dir)
+    }
+    save_analyses_index(index)
+    return analysis_id
+
+def load_analysis(analysis_id):
+    """Load a saved analysis"""
+    analysis_dir = ANALYSES_DIR / analysis_id
+    if not analysis_dir.exists():
+        return None
+    
+    # Load valuation summary
+    with open(analysis_dir / "valuation_summary.json", 'r') as f:
+        valuation_summary = json.load(f)
+    
+    # Load plot images
+    results_plot_path = analysis_dir / "results_plot.png"
+    distribution_plot_path = analysis_dir / "distribution_plot.png"
+    sensitivity_plot_path = analysis_dir / "sensitivity_plot.png"
+    
+    return {
+        'valuation_summary': valuation_summary,
+        'results_plot': results_plot_path,
+        'distribution_plot': distribution_plot_path,
+        'sensitivity_plot': sensitivity_plot_path
+    }
+
+def display_saved_analyses():
+    """Display the saved analyses organized by ticker"""
+    st.header("Performed Analyses")
+    
+    index = load_analyses_index()
+    
+    if not index:
+        st.info("No analyses have been performed yet. Run a simulation to save your first analysis.")
+        return
+    
+    # Initialize session state for selected analysis
+    if 'selected_analysis' not in st.session_state:
+        st.session_state.selected_analysis = None
+    
+    # Display analyses organized by ticker
+    for ticker in sorted(index.keys()):
+        analyses = index[ticker]
+        company_name = list(analyses.values())[0]['company_name']
+        
+        with st.expander(f"📊 {ticker} - {company_name} ({len(analyses)} analysis{'es' if len(analyses) > 1 else ''})"):
+            # Sort analyses by timestamp (newest first)
+            sorted_analyses = sorted(analyses.items(), key=lambda x: x[1]['timestamp'], reverse=True)
+            
+            for analysis_id, analysis_info in sorted_analyses:
+                date_str = analysis_info['date']
+                timestamp_str = analysis_info['timestamp']
+                # Format timestamp for display
+                try:
+                    dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                    formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    formatted_time = timestamp_str
+                
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**Date:** {date_str} | **Time:** {formatted_time}")
+                with col2:
+                    if st.button(f"View", key=f"view_{analysis_id}"):
+                        st.session_state.selected_analysis = analysis_id
+    
+    # Display selected analysis
+    if st.session_state.selected_analysis:
+        st.markdown("---")
+        st.subheader("Selected Analysis")
+        display_analysis(st.session_state.selected_analysis)
+
+def display_analysis(analysis_id):
+    """Display a saved analysis"""
+    analysis = load_analysis(analysis_id)
+    if not analysis:
+        st.error("Analysis not found.")
+        return
+    
+    valuation_summary = analysis['valuation_summary']
+    
+    # Display plots
+    col1, col2 = st.columns(2)
+    with col1:
+        st.image(str(analysis['results_plot']), caption="Results Plot", use_container_width=True)
+    with col2:
+        st.image(str(analysis['distribution_plot']), caption="Distribution Plot", use_container_width=True)
+    
+    st.image(str(analysis['sensitivity_plot']), caption="Sensitivity Analysis", use_container_width=True)
+    
+    # Display summary
+    st.markdown("### Valuation Summary")
+    sum_col1, sum_col2 = st.columns(2)
+    
+    with sum_col1:
+        st.markdown(f"""
+            <div class="summary-text">
+            <p><strong>Current Price:</strong> {valuation_summary['current_price']}<br>
+            <strong>Mean Value:</strong> {valuation_summary['mean_value']}<br>
+            <strong>Median Value:</strong> {valuation_summary['median_value']}<br>
+            <strong>Upside Potential:</strong> {valuation_summary['upside_potential']}</p>
+            
+            <p><strong>Probabilities:</strong><br>
+            Overvaluation: {valuation_summary['prob_overvalued']}<br>
+            Undervaluation: {valuation_summary['prob_undervalued']}</p>
+            
+            <p><strong>Risk Metrics:</strong><br>
+            VaR 95%: {valuation_summary['VaR 95%']}<br>
+            CVaR 95%: {valuation_summary['CVaR 95%']}<br>
+            Std. Deviation: {valuation_summary['Std. Deviation']}</p>
+            </div>
+        """, unsafe_allow_html=True)
+    
+    with sum_col2:
+        st.markdown(f"""
+            <div class="summary-text">
+            <p><strong>Variable Parameters:</strong><br>
+            Growth 5y: {valuation_summary['Variable Parameters']['Growth 5y']}<br>
+            Growth 5-10y: {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>
+            WACC: {valuation_summary['Variable Parameters']['WACC']}<br>
+            Risk Premium: {valuation_summary['Variable Parameters']['Risk Premium']}<br>
+            Risk Free Rate: {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>
+            Reinvestment 5y: {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
+            Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
+            
+            <p><strong>Terminal Value Params:</strong><br>
+            Term. Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
+            Term. WACC: {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
+            Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
+            </div>
+        """, unsafe_allow_html=True)
 
 # --- LÓGICA DE RECUPERACIÓN ---
 def fetch_data(ticker, target_curr):
@@ -52,11 +231,11 @@ with st.sidebar.form("input_form"):
         operating_income_base = st.number_input("Operating Income Base (millions)", value=st.session_state.st_vals['ebit'])
         debt = st.number_input("Debt (millions)", value=st.session_state.st_vals['debt'])
         tax_rate = st.number_input("Tax Rate (%)", value=21.0) # NUEVO
-        
+    
     # Calculate and display implied NOPAT
     nopat_implied = operating_income_base * (1 - tax_rate / 100)
     st.info(f"**Implied NOPAT:** {nopat_implied:.2f} millions {target_currency} (Operating Income × (1 - Tax Rate))")
-    
+
     # TODOS LOS PARÁMETROS ORIGINALES
     st.header("Growth Parameters")
     growth_rate_5y = st.number_input("Growth Rate 5y (%)", value=15.0)
@@ -101,9 +280,12 @@ if submitted:
 
     with st.spinner("Running Monte Carlo simulation..."):
         fig_es, fig_distribution_only, fig_sensitivity, valuation_summary = run_monte_carlo_simulation(params)
-        st.success(f"Monte Carlo simulation for {company_name} completed successfully!")
+        
+        # Save the analysis
+        analysis_id = save_analysis(t_input, company_name, valuation_summary, fig_es, fig_distribution_only, fig_sensitivity)
+        st.success(f"Monte Carlo simulation for {company_name} completed successfully! Analysis saved.")
 
-        tab1, tab2 = st.tabs(["Results", "Summary"])
+        tab1, tab2, tab3 = st.tabs(["Results", "Summary", "Performed Analyses"])
         
         with tab1:
             # Removed Results header
@@ -201,4 +383,12 @@ if submitted:
         plt.close(fig_es)
         plt.close(fig_distribution_only)
         plt.close(fig_sensitivity)
-
+        
+        # Performed Analyses tab
+        with tab3:
+            display_saved_analyses()
+else:
+    # Show Performed Analyses tab even when no simulation is running
+    tab1, tab2 = st.tabs(["New Analysis", "Performed Analyses"])
+    with tab2:
+        display_saved_analyses()
