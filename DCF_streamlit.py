@@ -855,7 +855,7 @@ if 'st_vals' not in st.session_state:
 
 def create_dual_input(label, min_val, max_val, value, step, key_prefix, help_text=None):
     """
-    Create both a number input (for typing) and a slider (for dragging).
+    Create both a text input (for typing) and a slider (for dragging).
     Both inputs are synced - you can use either one.
     """
     state_key = f"{key_prefix}_sync"
@@ -867,40 +867,61 @@ def create_dual_input(label, min_val, max_val, value, step, key_prefix, help_tex
     
     current_val = st.session_state[state_key]
     
-    # Number input for direct typing
-    num_value = st.number_input(
-        label,
-        min_value=min_val,
-        max_value=max_val,
-        value=current_val,
-        step=step,
-        key=f"{key_prefix}_num",
-        help=(help_text or "Type a value directly") + " | Use slider below for quick adjustment"
-    )
+    # Create columns for side-by-side layout
+    col_text, col_slider = st.columns([1, 2])
     
-    # Slider for dragging - syncs with number input
-    slider_value = st.slider(
-        "",
-        min_value=min_val,
-        max_value=max_val,
-        value=current_val,
-        step=step,
-        key=f"{key_prefix}_slider",
-        help="Drag to adjust the value above"
-    )
+    with col_text:
+        # Text input for direct typing (clear text box)
+        text_input_key = f"{key_prefix}_text"
+        if text_input_key not in st.session_state:
+            st.session_state[text_input_key] = str(current_val)
+        
+        text_value = st.text_input(
+            label,
+            value=st.session_state[text_input_key],
+            key=text_input_key,
+            help=(help_text or "Type a value directly in this text box") + " | Use slider on the right"
+        )
+        
+        # Convert text to number, with validation
+        try:
+            num_value = float(text_value) if text_value else current_val
+            # Clamp to min/max
+            num_value = max(min_val, min(max_val, num_value))
+        except (ValueError, TypeError):
+            num_value = current_val
+            st.session_state[text_input_key] = str(current_val)
+    
+    with col_slider:
+        # Slider for dragging - syncs with text input
+        slider_value = st.slider(
+            "↔️ Slider",
+            min_value=min_val,
+            max_value=max_val,
+            value=current_val,
+            step=step,
+            key=f"{key_prefix}_slider",
+            help="Drag to adjust the value in the text box"
+        )
     
     # Determine final value: prioritize the one that changed
-    # If both are the same as current, use current
-    # If slider changed, use slider (user dragged)
-    # If number input changed, use number input (user typed)
     final_value = current_val
     
-    if abs(slider_value - current_val) > step / 100:  # Slider was moved
+    # Check which one changed (with tolerance for floating point)
+    tolerance = max(step / 1000, 0.0001)
+    
+    if abs(slider_value - current_val) > tolerance:  # Slider was moved
         final_value = slider_value
         st.session_state[state_key] = slider_value
-    elif abs(num_value - current_val) > step / 100:  # Number input was changed
+        st.session_state[text_input_key] = str(slider_value)
+    elif abs(num_value - current_val) > tolerance:  # Text input was changed
         final_value = num_value
         st.session_state[state_key] = num_value
+        st.session_state[text_input_key] = str(num_value)
+    else:
+        # Update text input to match current value if they're out of sync
+        if abs(float(st.session_state.get(text_input_key, current_val)) - current_val) > tolerance:
+            st.session_state[text_input_key] = str(current_val)
     
     return final_value
 
@@ -990,6 +1011,7 @@ with st.sidebar.form("input_form"):
     # Currency se usa desde target_currency de arriba
 
     st.header("Financial Information")
+    st.caption("💡 **Tip:** Each field has a text box (with +/- buttons) where you can type values directly, plus a slider below for quick adjustment")
     
     # Check which values are missing (0) and show warning
     missing_fields = []
