@@ -470,6 +470,19 @@ st.subheader("👤 User Identification")
 if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
+# CRITICAL: Check for pending "Continue Anyway" action FIRST
+# This must happen before any other state checks
+# When user clicks "Continue Anyway", we store the name here and process it on next rerun
+if st.session_state.get('_pending_continue_user_name'):
+    pending_name = str(st.session_state.get('_pending_continue_user_name')).strip()
+    if pending_name:
+        # Set user state using the same function as new users
+        if set_user_name(pending_name):
+            # Clear the pending flag
+            st.session_state['_pending_continue_user_name'] = None
+            # Force rerun to proceed with initialized state
+            st.rerun()
+
 # CRITICAL: Check and set user state BEFORE any conditionals
 # If user_name exists and is valid, ensure initialized is True
 user_name_from_state = st.session_state.get('user_name')
@@ -559,14 +572,15 @@ if not user_is_initialized:
         with col2:
             choose_different = st.button("Choose Different Name", key="choose_different")
         
-        # Handle Continue Anyway button click - EXACTLY like setting a new user
+        # Handle Continue Anyway button click
         if continue_btn:
             user_input_clean = warning_user_name.strip()
             if user_input_clean:
-                # Use the exact same flow as new user: call set_user_name() and rerun
-                if set_user_name(user_input_clean):
-                    st.success(f"✅ Name set to: {user_input_clean}")
-                    st.rerun()
+                # Store the name in session state to process on next rerun
+                # This ensures the state is set before any conditionals run
+                st.session_state['_pending_continue_user_name'] = user_input_clean
+                # Immediately rerun - the check at the top will process it
+                st.rerun()
         
         # Handle Choose Different button click
         elif choose_different:
@@ -1589,6 +1603,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
