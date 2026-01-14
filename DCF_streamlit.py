@@ -470,8 +470,24 @@ st.subheader("👤 User Identification")
 if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
-# CRITICAL: Check if user was just initialized from "Continue Anyway" button
-# This must be checked FIRST before any other state checks
+# CRITICAL: Check for "Continue Anyway" action FIRST - before any other checks
+# This handles the case where user clicked "Continue Anyway" on previous run
+if st.session_state.get('continue_anyway_clicked') and st.session_state.get('continue_anyway_name'):
+    continue_name = str(st.session_state.get('continue_anyway_name')).strip()
+    if continue_name:
+        # Set state immediately using all methods to ensure it persists
+        set_user_name(continue_name)
+        st.session_state.user_name = continue_name
+        st.session_state['user_name'] = continue_name
+        st.session_state.user_id = get_user_id_from_name(continue_name)
+        st.session_state['user_id'] = get_user_id_from_name(continue_name)
+        st.session_state.user_initialized = True
+        st.session_state['user_initialized'] = True
+        # Clear the flags
+        st.session_state['continue_anyway_clicked'] = False
+        st.session_state['continue_anyway_name'] = None
+
+# Check if user was just initialized from "Continue Anyway" button (flag-based approach)
 if st.session_state.get('_just_initialized_user') and st.session_state.get('_pending_user_name'):
     pending_name = str(st.session_state.get('_pending_user_name')).strip()
     if pending_name:
@@ -515,16 +531,31 @@ user_is_initialized = (
 )
 
 # FINAL SAFEGUARD: If user_name exists but initialized check failed, fix it
+# This ensures state is always consistent
 if (not user_is_initialized and 
     st.session_state.get('user_name') and 
     str(st.session_state.get('user_name', '')).strip() != ''):
-    # Force initialization
+    # Force initialization using all methods
     user_name_fix = str(st.session_state.get('user_name')).strip()
+    st.session_state.user_name = user_name_fix
     st.session_state['user_name'] = user_name_fix
+    st.session_state.user_id = get_user_id_from_name(user_name_fix)
     st.session_state['user_id'] = get_user_id_from_name(user_name_fix)
+    st.session_state.user_initialized = True
     st.session_state['user_initialized'] = True
     user_is_initialized = True
 
+# Re-check after safeguard
+if not user_is_initialized:
+    user_is_initialized = (
+        st.session_state.get('user_initialized') is True and 
+        st.session_state.get('user_name') is not None and 
+        str(st.session_state.get('user_name', '')).strip() != ''
+    )
+
+# Render user input section only if not initialized
+# But first, we need to handle the "Continue Anyway" button if it exists
+# We'll check for it inside the block
 if not user_is_initialized:
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -573,7 +604,11 @@ if not user_is_initialized:
             # Set user name directly and immediately
             user_input_clean = warning_user_name.strip()
             if user_input_clean:
-                # Set state using multiple methods to ensure it persists
+                # Store the action in session state - this will be processed on next rerun
+                st.session_state['continue_anyway_name'] = user_input_clean
+                st.session_state['continue_anyway_clicked'] = True
+                
+                # Also set state immediately to ensure it's available
                 set_user_name(user_input_clean)
                 st.session_state['user_name'] = user_input_clean
                 st.session_state['user_id'] = get_user_id_from_name(user_input_clean)
@@ -1605,5 +1640,6 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
