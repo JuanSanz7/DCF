@@ -27,7 +27,7 @@ def load_analyses_index():
 def save_analyses_index(index):
     """Save the index of all analyses"""
     with open(ANALYSES_INDEX_FILE, 'w') as f:
-        json.dump(index, f, indent=2)
+        json. dump(index, f, indent=2)
 
 def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribution_only, fig_sensitivity):
     """Save an analysis to disk"""
@@ -40,7 +40,7 @@ def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribut
     fig_es.savefig(analysis_dir / "results_plot.png", dpi=150, bbox_inches='tight')
     
     # Save valuation summary as JSON
-    with open(analysis_dir / "valuation_summary.json", 'w') as f:
+    with open(analysis_dir / "valuation_summary. json", 'w') as f:
         json.dump(valuation_summary, f, indent=2)
     
     # Update index
@@ -60,19 +60,19 @@ def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribut
 def load_analysis(analysis_id):
     """Load a saved analysis"""
     analysis_dir = ANALYSES_DIR / analysis_id
-    if not analysis_dir.exists():
+    if not analysis_dir. exists():
         return None
     
     # Load valuation summary
     with open(analysis_dir / "valuation_summary.json", 'r') as f:
-        valuation_summary = json.load(f)
+        valuation_summary = json. load(f)
     
     # Load results plot
     results_plot_path = analysis_dir / "results_plot.png"
     
     return {
         'valuation_summary': valuation_summary,
-        'results_plot': results_plot_path
+        'results_plot':  results_plot_path
     }
 
 def delete_analysis(analysis_id):
@@ -81,7 +81,7 @@ def delete_analysis(analysis_id):
     
     # Find and remove from index
     for ticker in list(index.keys()):
-        if analysis_id in index[ticker]:
+        if analysis_id in index[ticker]: 
             del index[ticker][analysis_id]
             # Remove ticker entry if no analyses left
             if not index[ticker]:
@@ -106,8 +106,8 @@ def display_saved_analyses():
     
     index = load_analyses_index()
     
-    if not index:
-        st.info("No analyses have been performed yet. Run a simulation to save your first analysis.")
+    if not index: 
+        st.info("No analyses have been performed yet.  Run a simulation to save your first analysis.")
         return
     
     # Initialize session state for selected analysis
@@ -115,8 +115,8 @@ def display_saved_analyses():
         st.session_state.selected_analysis = None
     
     # Check if an analysis was deleted
-    if 'delete_analysis_id' in st.session_state:
-        delete_analysis(st.session_state.delete_analysis_id)
+    if 'delete_analysis_id' in st. session_state:
+        delete_analysis(st.session_state. delete_analysis_id)
         del st.session_state.delete_analysis_id
         st.rerun()
     
@@ -144,8 +144,8 @@ def display_saved_analyses():
                     st.write(f"**Date:** {date_str} | **Time:** {formatted_time}")
                 with col2:
                     if st.button("View", key=f"view_{analysis_id}"):
-                        st.session_state.selected_analysis = analysis_id
-                        st.session_state.active_tab = "Performed Analyses"
+                        st. session_state.selected_analysis = analysis_id
+                        st. session_state.active_tab = "Performed Analyses"
                         # Set query param to persist tab selection
                         st.query_params.tab = "performed"
                         # Clear the radio button state to force it to use our index on rerun
@@ -159,7 +159,7 @@ def display_saved_analyses():
                         st.rerun()
     
     # Display selected analysis
-    if st.session_state.selected_analysis:
+    if st.session_state. selected_analysis:
         st.markdown("---")
         st.subheader("Selected Analysis")
         display_analysis(st.session_state.selected_analysis)
@@ -189,7 +189,7 @@ def display_analysis(analysis_id):
         st.markdown(f"""
             <div class="summary-text">
             <p><strong>Current Price:</strong> {valuation_summary['current_price']}<br>
-            <strong>Mean Value:</strong> {valuation_summary['mean_value']}<br>
+            <strong>Mean Value: </strong> {valuation_summary['mean_value']}<br>
             <strong>Median Value:</strong> {valuation_summary['median_value']}<br>
             <strong>Upside Potential:</strong> {valuation_summary['upside_potential']}</p>
             
@@ -200,7 +200,7 @@ def display_analysis(analysis_id):
             <p><strong>Risk Metrics:</strong><br>
             VaR 95%: {valuation_summary['VaR 95%']}<br>
             CVaR 95%: {valuation_summary['CVaR 95%']}<br>
-            Std. Deviation: {valuation_summary['Std. Deviation']}</p>
+            Std.  Deviation: {valuation_summary['Std. Deviation']}</p>
             </div>
         """, unsafe_allow_html=True)
     
@@ -217,9 +217,9 @@ def display_analysis(analysis_id):
             Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
             
             <p><strong>Terminal Value Params:</strong><br>
-            Term. Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
-            Term. WACC: {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
-            Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
+            Term.  Growth:  {valuation_summary['Terminal Value Params']['Term.  Growth']}<br>
+            Term.  WACC: {valuation_summary['Terminal Value Params']['Term.  WACC']}<br>
+            Term.  Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
             </div>
         """, unsafe_allow_html=True)
 
@@ -230,77 +230,357 @@ def fetch_data(ticker, target_curr):
         info = tk.info
         native_curr = info.get("currency", "USD")
         data = {
-            "price": info.get("currentPrice", 168.4),
-            "shares": info.get("sharesOutstanding", 12700e6) / 1e6,
+            "price": info.get("currentPrice", 168. 4),
+            "shares":  info.get("sharesOutstanding", 12700e6) / 1e6,
             "cash": info.get("totalCash", 96000e6) / 1e6,
             "ebit": info.get("ebitda", 154740e6) * 0.85 / 1e6,
             "debt": info.get("totalDebt", 22000e6) / 1e6,
         }
-        if target_curr != native_curr:
+        if target_curr != native_curr: 
             rate = yf.Ticker(f"{native_curr}{target_curr}=X").history(period="1d")['Close'].iloc[-1]
-            for k in ["price", "cash", "ebit", "debt"]: data[k] *= rate
+            for k in ["price", "cash", "ebit", "debt"]:  data[k] *= rate
         return data
-    except: return None
+    except:  
+        return None
 
 if 'st_vals' not in st.session_state:
-    st.session_state.st_vals = {"price": 168.4, "shares": 12700.0, "cash": 96000.0, "ebit": 154740.0, "debt": 22000.0}
+    st.session_state.st_vals = {"price": 168.4, "shares": 12700.0, "cash": 96000.0, "ebit": 154740.0, "debt":  22000.0}
 
 # Initialize tab state
 if 'active_tab' not in st.session_state:
     st.session_state.active_tab = "New Analysis"
 
+# Helper:  dual slider + number input with two-way sync
+def _make_dual_input(key, label, default, min_value, max_value, step, fmt="{:.2f}", integer=False):
+    """
+    Create a slider and a numeric input side-by-side that stay in sync.
+    Returns the current value (float or int depending on `integer`).
+    Keys used in session_state:  f"{key}_slider" and f"{key}_input"
+    """
+    slider_key = f"{key}_slider"
+    input_key = f"{key}_input"
+
+    # Initialize state if not present
+    if slider_key not in st.session_state:
+        st.session_state[slider_key] = default
+    if input_key not in st.session_state:
+        st.session_state[input_key] = default
+
+    # Callbacks to keep both widgets in sync
+    def _sync_slider_to_input(k=key):
+        st.session_state[f"{k}_input"] = st.session_state[f"{k}_slider"]
+
+    def _sync_input_to_slider(k=key):
+        st.session_state[f"{k}_slider"] = st.session_state[f"{k}_input"]
+
+    col_a, col_b = st.columns([3, 1])
+    with col_a:
+        # Slider display
+        if integer:
+            st.session_state[slider_key] = st.slider(
+                label,
+                min_value=int(min_value),
+                max_value=int(max_value),
+                value=int(st.session_state[slider_key]),
+                step=int(step),
+                key=slider_key,
+                on_change=_sync_slider_to_input
+            )
+        else:
+            st.session_state[slider_key] = st.slider(
+                label,
+                min_value=float(min_value),
+                max_value=float(max_value),
+                value=float(st.session_state[slider_key]),
+                step=float(step),
+                format=fmt,
+                key=slider_key,
+                on_change=_sync_slider_to_input
+            )
+    with col_b:
+        # Numeric input display
+        if integer:
+            st.session_state[input_key] = st.number_input(
+                "", min_value=int(min_value), max_value=int(max_value),
+                value=int(st.session_state[input_key]), step=int(step),
+                key=input_key, on_change=_sync_input_to_slider, format="%d"
+            )
+        else:
+            st.session_state[input_key] = st. number_input(
+                "", min_value=float(min_value), max_value=float(max_value),
+                value=float(st.session_state[input_key]), step=float(step),
+                key=input_key, on_change=_sync_input_to_slider, format=fmt
+            )
+
+    # Return the unified value (use slider value as source of truth)
+    return int(st.session_state[slider_key]) if integer else float(st.session_state[slider_key])
+
 with st.sidebar:
-    st.header("1. Automatic Search")
+    st. header("1. Automatic Search")
     t_input = st.text_input("Ticker", value="GOOGL").upper()
     target_currency = st.text_input("Target Currency", value="USD").upper()
     if st.button("Fetch & Auto-fill"):
-        res = fetch_data(t_input, target_currency)
-        if res: st.session_state.st_vals.update(res)
+        with st.spinner("Fetching data..."):
+            res = fetch_data(t_input, target_currency)
+        if res:
+            # update general store
+            st.session_state.st_vals. update(res)
 
-with st.sidebar.form("input_form"):
+            # Map fetched fields to widget keys used by _make_dual_input and update them
+            mapping = {
+                "current_price": res. get("price"),
+                "shares_outstanding": res.get("shares"),
+                "cash": res. get("cash"),
+                "operating_income_base": res.get("ebit"),
+                "debt": res.get("debt"),
+            }
+            for k, v in mapping.items():
+                if v is None:
+                    continue
+                # ensure float/int types
+                try:
+                    val = float(v)
+                except Exception:
+                    continue
+                st.session_state[f"{k}_slider"] = val
+                st.session_state[f"{k}_input"] = val
+
+            st.success("Auto-fill applied.")
+            # rerun so form widgets pick up the new session_state values
+            st.rerun()
+        else:
+            st.error("Could not fetch data. Check ticker, currency and internet connection.")
+
+with st.sidebar. form("input_form"):
     st.header("Company Information")
     company_name = st.text_input("Company Name", value=t_input)
     # Currency se usa desde target_currency de arriba
 
     st.header("Financial Information")
-    col1, col2 = st.columns(2)
-    with col1:
-        current_price = st.number_input("Current Price", value=st.session_state.st_vals['price'])
-        shares_outstanding = st.number_input("Shares Outstanding (millions)", value=st.session_state.st_vals['shares'])
-        cash = st.number_input("Cash (millions)", value=st.session_state.st_vals['cash'])
-    with col2:
-        operating_income_base = st.number_input("Operating Income Base (millions)", value=st.session_state.st_vals['ebit'])
-        debt = st.number_input("Debt (millions)", value=st.session_state.st_vals['debt'])
-        tax_rate = st.number_input("Tax Rate (%)", value=21.0) # NUEVO
-    
+
+    # determine sensible maxima based on fetched/default values
+    current_price_default = st.session_state. st_vals.get('price', 168.4)
+    shares_default = st.session_state.st_vals.get('shares', 12700.0)
+    cash_default = st.session_state.st_vals.get('cash', 96000.0)
+    ebit_default = st. session_state.st_vals. get('ebit', 154740.0)
+    debt_default = st.session_state.st_vals.get('debt', 22000.0)
+
+    # Current price, shares, cash, operating income, debt, tax rate
+    with st.container():
+        current_price = _make_dual_input(
+            key="current_price",
+            label="Current Price",
+            default=current_price_default,
+            min_value=0.0,
+            max_value=max(current_price_default * 5, 10. 0),
+            step=0.1,
+            fmt="%.2f"
+        )
+
+        shares_outstanding = _make_dual_input(
+            key="shares_outstanding",
+            label="Shares Outstanding (millions)",
+            default=shares_default,
+            min_value=0.0,
+            max_value=max(shares_default * 5, 1. 0),
+            step=1,
+            fmt="%.1f"
+        )
+
+        cash = _make_dual_input(
+            key="cash",
+            label="Cash (millions)",
+            default=cash_default,
+            min_value=0.0,
+            max_value=max(cash_default * 2, 10.0),
+            step=1,
+            fmt="%.1f"
+        )
+
+        operating_income_base = _make_dual_input(
+            key="operating_income_base",
+            label="Operating Income Base (millions)",
+            default=ebit_default,
+            min_value=0.0,
+            max_value=max(ebit_default * 3, 10.0),
+            step=1,
+            fmt="%.1f"
+        )
+
+        debt = _make_dual_input(
+            key="debt",
+            label="Debt (millions)",
+            default=debt_default,
+            min_value=0.0,
+            max_value=max(debt_default * 2, 10.0),
+            step=1,
+            fmt="%.1f"
+        )
+
+        tax_rate = _make_dual_input(
+            key="tax_rate",
+            label="Tax Rate (%)",
+            default=21.0,
+            min_value=0.0,
+            max_value=100.0,
+            step=0.1,
+            fmt="%. 1f"
+        )
+
     # Calculate and display implied NOPAT
     nopat_implied = operating_income_base * (1 - tax_rate / 100)
     st.info(f"**Implied NOPAT:** {nopat_implied:.2f} millions {target_currency} (Operating Income × (1 - Tax Rate))")
 
-    # TODOS LOS PARÁMETROS ORIGINALES
+    # Growth Parameters
     st.header("Growth Parameters")
-    growth_rate_5y = st.number_input("Growth Rate 5y (%)", value=15.0)
-    growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", value=8.0)
+    growth_rate_5y = _make_dual_input(
+        key="growth_rate_5y",
+        label="Growth Rate 5y (%)",
+        default=15.0,
+        min_value=-50.0,
+        max_value=200.0,
+        step=0.1,
+        fmt="%.1f"
+    )
+    growth_rate_5_10y = _make_dual_input(
+        key="growth_rate_5_10y",
+        label="Growth Rate 5-10y (%)",
+        default=8.0,
+        min_value=-50.0,
+        max_value=200.0,
+        step=0.1,
+        fmt="%.1f"
+    )
 
+    # Risk Parameters
     st.header("Risk Parameters")
-    risk_free_rate = st.number_input("Risk Free Rate (%)", value=4.5)
-    equity_risk_premium = st.number_input("Equity Risk Premium (%)", value=5.13)
-    WACC = st.number_input("WACC (%)", value=9.6)
+    risk_free_rate = _make_dual_input(
+        key="risk_free_rate",
+        label="Risk Free Rate (%)",
+        default=4.5,
+        min_value=-5.0,
+        max_value=50.0,
+        step=0.1,
+        fmt="%. 2f"
+    )
+    equity_risk_premium = _make_dual_input(
+        key="equity_risk_premium",
+        label="Equity Risk Premium (%)",
+        default=5.13,
+        min_value=0.0,
+        max_value=50.0,
+        step=0.1,
+        fmt="%. 2f"
+    )
+    WACC = _make_dual_input(
+        key="WACC",
+        label="WACC (%)",
+        default=9.6,
+        min_value=0.0,
+        max_value=50.0,
+        step=0.1,
+        fmt="%. 2f"
+    )
 
+    # Reinvestment Rates
     st.header("Reinvestment Rates")
-    reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", value=50.0)
-    reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", value=50.0)
+    reinvestment_rate_5y = _make_dual_input(
+        key="reinvestment_rate_5y",
+        label="Reinvestment Rate 5y (%)",
+        default=50.0,
+        min_value=0.0,
+        max_value=100.0,
+        step=0.1,
+        fmt="%.1f"
+    )
+    reinvestment_rate_5_10y = _make_dual_input(
+        key="reinvestment_rate_5_10y",
+        label="Reinvestment Rate 5-10y (%)",
+        default=50.0,
+        min_value=0.0,
+        max_value=100.0,
+        step=0.1,
+        fmt="%.1f"
+    )
 
-    st.header("Standard Deviations")
-    std_growth_5y = st.number_input("Std Growth 5y (%)", value=2.0)
-    std_growth_5_10y = st.number_input("Std Growth 5-10y (%)", value=3.0)
-    std_risk_free = st.number_input("Std Risk Free (%)", value=0.5)
-    std_equity_premium = st.number_input("Std Equity Premium (%)", value=0.5)
-    std_WACC = st.number_input("Std WACC (%)", value=0.5)
-    std_reinv_5y = st.number_input("Std Reinv 5y (%)", value=2.5)
-    std_reinv_5_10y = st.number_input("Std Reinv 5-10y (%)", value=5.0)
+    # Standard Deviations
+    st. header("Standard Deviations")
+    std_growth_5y = _make_dual_input(
+        key="std_growth_5y",
+        label="Std Growth 5y (%)",
+        default=2.0,
+        min_value=0.0,
+        max_value=50.0,
+        step=0.1,
+        fmt="%. 2f"
+    )
+    std_growth_5_10y = _make_dual_input(
+        key="std_growth_5_10y",
+        label="Std Growth 5-10y (%)",
+        default=3.0,
+        min_value=0.0,
+        max_value=50.0,
+        step=0.1,
+        fmt="%.2f"
+    )
+    std_risk_free = _make_dual_input(
+        key="std_risk_free",
+        label="Std Risk Free (%)",
+        default=0.5,
+        min_value=0.0,
+        max_value=10.0,
+        step=0.01,
+        fmt="%.2f"
+    )
+    std_equity_premium = _make_dual_input(
+        key="std_equity_premium",
+        label="Std Equity Premium (%)",
+        default=0.5,
+        min_value=0.0,
+        max_value=10.0,
+        step=0.01,
+        fmt="%.2f"
+    )
+    std_WACC = _make_dual_input(
+        key="std_WACC",
+        label="Std WACC (%)",
+        default=0.5,
+        min_value=0.0,
+        max_value=10.0,
+        step=0.01,
+        fmt="%.2f"
+    )
+    std_reinv_5y = _make_dual_input(
+        key="std_reinv_5y",
+        label="Std Reinv 5y (%)",
+        default=2.5,
+        min_value=0.0,
+        max_value=50.0,
+        step=0.1,
+        fmt="%.2f"
+    )
+    std_reinv_5_10y = _make_dual_input(
+        key="std_reinv_5_10y",
+        label="Std Reinv 5-10y (%)",
+        default=5.0,
+        min_value=0.0,
+        max_value=50.0,
+        step=0.1,
+        fmt="%.2f"
+    )
 
-    n_simulations = st.number_input("Simulations", value=10000)
+    # Simulations (integer)
+    n_simulations = _make_dual_input(
+        key="n_simulations",
+        label="Simulations",
+        default=10000,
+        min_value=100,
+        max_value=100000,
+        step=100,
+        fmt="%d",
+        integer=True
+    )
+
     submitted = st.form_submit_button("Run Simulation")
 
 # If an analysis is selected for viewing, force to else block for proper tab handling
@@ -310,17 +590,17 @@ viewing_analysis = st.session_state.get('selected_analysis') and not submitted
 if submitted and not viewing_analysis:
     params = {
         'company_name': company_name, 'currency': target_currency,
-        'current_price': current_price, 'shares_outstanding': shares_outstanding,
-        'cash': cash, 'debt': debt, 'operating_income_base': operating_income_base,
-        'tax_rate': tax_rate/100,
-        'growth_rate_5y': growth_rate_5y/100, 'growth_rate_5_10y': growth_rate_5_10y/100,
-        'risk_free_rate': risk_free_rate/100, 'equity_risk_premium': equity_risk_premium/100,
-        'WACC': WACC/100, 'reinvestment_rate_5y': reinvestment_rate_5y/100,
-        'reinvestment_rate_5_10y': reinvestment_rate_5_10y/100,
-        'std_growth_5y': std_growth_5y/100, 'std_growth_5_10y': std_growth_5_10y/100,
-        'std_risk_free': std_risk_free/100, 'std_equity_premium': std_equity_premium/100,
-        'std_WACC': std_WACC/100, 'std_reinv_5y': std_reinv_5y/100,
-        'std_reinv_5_10y': std_reinv_5_10y/100, 'n_simulations': int(n_simulations)
+        'current_price': float(current_price), 'shares_outstanding': float(shares_outstanding),
+        'cash': float(cash), 'debt': float(debt), 'operating_income_base': float(operating_income_base),
+        'tax_rate': float(tax_rate)/100,
+        'growth_rate_5y': float(growth_rate_5y)/100, 'growth_rate_5_10y': float(growth_rate_5_10y)/100,
+        'risk_free_rate': float(risk_free_rate)/100, 'equity_risk_premium': float(equity_risk_premium)/100,
+        'WACC': float(WACC)/100, 'reinvestment_rate_5y': float(reinvestment_rate_5y)/100,
+        'reinvestment_rate_5_10y': float(reinvestment_rate_5_10y)/100,
+        'std_growth_5y': float(std_growth_5y)/100, 'std_growth_5_10y': float(std_growth_5_10y)/100,
+        'std_risk_free': float(std_risk_free)/100, 'std_equity_premium': float(std_equity_premium)/100,
+        'std_WACC': float(std_WACC)/100, 'std_reinv_5y': float(std_reinv_5y)/100,
+        'std_reinv_5_10y': float(std_reinv_5_10y)/100, 'n_simulations': int(n_simulations)
     }
 
     with st.spinner("Running Monte Carlo simulation..."):
@@ -328,7 +608,7 @@ if submitted and not viewing_analysis:
         
         # Save the analysis
         analysis_id = save_analysis(t_input, company_name, valuation_summary, fig_es, fig_distribution_only, fig_sensitivity)
-        st.success(f"Monte Carlo simulation for {company_name} completed successfully! Analysis saved.")
+        st.success(f"Monte Carlo simulation for {company_name} completed successfully!  Analysis saved.")
 
         tab1, tab2, tab3 = st.tabs(["Results", "Summary", "Performed Analyses"])
         
@@ -363,7 +643,7 @@ if submitted and not viewing_analysis:
                     mime="image/png"
                 )
 
-            with col2_summary:
+            with col2_summary: 
                 st.markdown("""
                     <style>
                     .summary-text {
@@ -373,7 +653,7 @@ if submitted and not viewing_analysis:
                 """, unsafe_allow_html=True)
                 
                 # Centered header for the Valuation Summary
-                st.markdown("<h3 style='text-align: center;'>Valuation Summary</h3>", unsafe_allow_html=True)
+                st.markdown("<h3 style='text-align:  center;'>Valuation Summary</h3>", unsafe_allow_html=True)
                 
                 st.markdown(f"""
                     <div class="summary-text">
@@ -389,7 +669,7 @@ if submitted and not viewing_analysis:
                 with sum_col1:
                     st.markdown(f"""
                         <div class="summary-text">
-                        <p><strong>Current Price:</strong> {valuation_summary['current_price']}<br>
+                        <p><strong>Current Price: </strong> {valuation_summary['current_price']}<br>
                         <strong>Mean Value:</strong> {valuation_summary['mean_value']}<br>
                         <strong>Median Value:</strong> {valuation_summary['median_value']}<br>
                         <strong>Upside Potential:</strong> {valuation_summary['upside_potential']}</p>
@@ -398,29 +678,29 @@ if submitted and not viewing_analysis:
                         Overvaluation: {valuation_summary['prob_overvalued']}<br>
                         Undervaluation: {valuation_summary['prob_undervalued']}</p>
                         
-                        <p><strong>Risk Metrics:</strong><br>
+                        <p><strong>Risk Metrics: </strong><br>
                         VaR 95%: {valuation_summary['VaR 95%']}<br>
-                        CVaR 95%: {valuation_summary['CVaR 95%']}<br>
-                        Std. Deviation: {valuation_summary['Std. Deviation']}</p>
+                        CVaR 95%:  {valuation_summary['CVaR 95%']}<br>
+                        Std.  Deviation: {valuation_summary['Std. Deviation']}</p>
                         </div>
                     """, unsafe_allow_html=True)
                 
                 with sum_col2:
                     st.markdown(f"""
                         <div class="summary-text">
-                        <p><strong>Variable Parameters:</strong><br>
+                        <p><strong>Variable Parameters: </strong><br>
                         Growth 5y: {valuation_summary['Variable Parameters']['Growth 5y']}<br>
                         Growth 5-10y: {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>
                         WACC: {valuation_summary['Variable Parameters']['WACC']}<br>
                         Risk Premium: {valuation_summary['Variable Parameters']['Risk Premium']}<br>
                         Risk Free Rate: {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>
-                        Reinvestment 5y: {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
+                        Reinvestment 5y:  {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
                         Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
                         
                         <p><strong>Terminal Value Params:</strong><br>
-                        Term. Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
+                        Term.  Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
                         Term. WACC: {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
-                        Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
+                        Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term.  Reinv Rate']}</p>
                         </div>
                     """, unsafe_allow_html=True)
 
@@ -440,14 +720,14 @@ else:
     # Check query params first (most reliable for persistence)
     query_tab = None
     if "tab" in st.query_params:
-        tab_param = st.query_params.get("tab")
+        tab_param = st.query_params. get("tab")
         query_tab = tab_param[0] if isinstance(tab_param, list) else tab_param
     
     # PRIORITY: If an analysis is selected, ALWAYS force to Performed Analyses tab
     # This must be checked FIRST before any other logic
     if st.session_state.get('selected_analysis'):
         st.session_state.active_tab = "Performed Analyses"
-        if query_tab != "performed":
+        if query_tab != "performed": 
             st.query_params.tab = "performed"
         # Force the radio button to use Performed Analyses by clearing its state
         if 'tab_selector' in st.session_state:
@@ -464,7 +744,7 @@ else:
     else:
         default_index = 0
         if st.session_state.active_tab != "New Analysis":
-            st.session_state.active_tab = "New Analysis"
+            st. session_state.active_tab = "New Analysis"
     
     # Create tabs with radio buttons to maintain state
     # If selected_analysis exists, force the value to "Performed Analyses"
@@ -490,14 +770,14 @@ else:
     if tab_selection != st.session_state.active_tab:
         st.session_state.active_tab = tab_selection
         if tab_selection == "Performed Analyses":
-            st.query_params.tab = "performed"
+            st. query_params.tab = "performed"
         else:
             st.query_params.tab = "new"
             # Clear selected analysis when switching to New Analysis
             if 'selected_analysis' in st.session_state:
                 st.session_state.selected_analysis = None
     
-    if tab_selection == "New Analysis":
+    if tab_selection == "New Analysis": 
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
