@@ -470,58 +470,48 @@ st.subheader("👤 User Identification")
 if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
-# No special handling needed - state will be checked below
+# ============================================================================
+# STEP 1: Process "Continue Anyway" action FIRST (before any other logic)
+# ============================================================================
+# When user clicks "Continue Anyway", we store the name in session state
+# On the next rerun, we process it here at the very top
+if st.session_state.get('_action_continue_anyway'):
+    continue_name = str(st.session_state.get('_action_continue_anyway')).strip()
+    if continue_name:
+        # Set user state using the helper function (same as new users)
+        set_user_name(continue_name)
+        # Explicitly ensure all state variables are set
+        st.session_state['user_name'] = continue_name
+        st.session_state['user_id'] = get_user_id_from_name(continue_name)
+        st.session_state['user_initialized'] = True
+        # Clear the action flag
+        st.session_state['_action_continue_anyway'] = None
+        # Force rerun to proceed with initialized state
+        st.rerun()
 
-# CRITICAL: Check and set user state BEFORE any conditionals
-# If user_name exists and is valid, ensure initialized is True
-user_name_from_state = st.session_state.get('user_name')
-if user_name_from_state:
-    try:
-        user_name_val = str(user_name_from_state).strip()
-        if user_name_val:
-            # If user_name exists and is valid, ensure initialized is True
-            st.session_state['user_name'] = user_name_val
-            st.session_state['user_id'] = get_user_id_from_name(user_name_val)
-            st.session_state['user_initialized'] = True
-        else:
-            # user_name is empty string, reset
-            st.session_state['user_initialized'] = False
-    except (AttributeError, TypeError):
-        # If user_name is not a valid string, reset it
-        st.session_state['user_name'] = None
-        st.session_state['user_initialized'] = False
-
-# Determine if user is initialized - use simple, direct check
-user_is_initialized = False
-if st.session_state.get('user_initialized') is True:
-    user_name_check = st.session_state.get('user_name')
-    if user_name_check and str(user_name_check).strip() != '':
-        user_is_initialized = True
-# Also check if user_name exists (fallback)
-if not user_is_initialized and st.session_state.get('user_name'):
+# ============================================================================
+# STEP 2: Check and ensure user state is consistent
+# ============================================================================
+# If user_name exists in session state, ensure user_initialized is True
+if st.session_state.get('user_name'):
     user_name_val = str(st.session_state.get('user_name')).strip()
     if user_name_val:
-        # Force initialization
-        set_user_name(user_name_val)
-        st.session_state.user_initialized = True
+        # Ensure all state variables are set correctly
+        st.session_state['user_name'] = user_name_val
+        st.session_state['user_id'] = get_user_id_from_name(user_name_val)
         st.session_state['user_initialized'] = True
-        user_is_initialized = True
+    else:
+        # Empty name, reset
+        st.session_state['user_initialized'] = False
 
-# FINAL SAFEGUARD: If user_name exists but initialized check failed, fix it
-# This ensures state is always consistent
-if not user_is_initialized:
-    user_name_val = st.session_state.get('user_name')
-    if user_name_val and str(user_name_val).strip() != '':
-        # Force initialization using all methods
-        user_name_fix = str(user_name_val).strip()
-        set_user_name(user_name_fix)
-        st.session_state.user_name = user_name_fix
-        st.session_state['user_name'] = user_name_fix
-        st.session_state.user_id = get_user_id_from_name(user_name_fix)
-        st.session_state['user_id'] = get_user_id_from_name(user_name_fix)
-        st.session_state.user_initialized = True
-        st.session_state['user_initialized'] = True
-        user_is_initialized = True
+# ============================================================================
+# STEP 3: Determine if user is initialized
+# ============================================================================
+user_is_initialized = (
+    st.session_state.get('user_initialized') is True and
+    st.session_state.get('user_name') is not None and
+    str(st.session_state.get('user_name', '')).strip() != ''
+)
 
 
 # Render user input section only if not initialized
@@ -571,14 +561,14 @@ if not user_is_initialized:
         with col2:
             choose_different = st.button("Choose Different Name", key="choose_different")
         
-        # Handle Continue Anyway button click - EXACTLY like "Set Name" for new users
+        # Handle Continue Anyway button click
         if continue_btn:
             user_input_clean = warning_user_name.strip()
             if user_input_clean:
-                # Use the exact same flow as new user: call set_user_name() and rerun
-                if set_user_name(user_input_clean):
-                    st.success(f"✅ Welcome back, {user_input_clean}! Loading your analyses...")
-                    st.rerun()
+                # Store the action in session state - will be processed at top on next rerun
+                st.session_state['_action_continue_anyway'] = user_input_clean
+                # Immediately rerun - the check at the top will process it
+                st.rerun()
         
         # Handle Choose Different button click
         elif choose_different:
@@ -1601,6 +1591,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
