@@ -479,6 +479,20 @@ if st.session_state.get('user_name') and st.session_state.get('user_name').strip
 
 # User name input - only show if user is not initialized
 if not st.session_state.user_initialized:
+    # Check for "Continue Anyway" button click first (independent of submit_user)
+    if 'pending_continue_user' in st.session_state and st.session_state.pending_continue_user:
+        pending_name = st.session_state.get('pending_user_name', '').strip()
+        if pending_name:
+            # Set all state variables explicitly
+            st.session_state.user_name = pending_name
+            st.session_state.user_id = get_user_id_from_name(pending_name)
+            st.session_state.user_initialized = True
+            # Clear pending state
+            del st.session_state.pending_continue_user
+            del st.session_state.pending_user_name
+            # Rerun to proceed to main app
+            st.rerun()
+    
     col1, col2 = st.columns([3, 1])
     with col1:
         user_input = st.text_input(
@@ -492,43 +506,20 @@ if not st.session_state.user_initialized:
         st.write("")  # Spacing
         submit_user = st.button("Set Name", key="submit_user_name", type="primary")
     
+    # Track if we're showing the warning (to show buttons)
+    showing_warning = False
+    warning_user_name = ""
+    
     # Handle name submission
     if submit_user and user_input:
         user_input = user_input.strip()
         if not user_input:
             st.error("Please enter a valid name.")
         elif is_user_name_taken(user_input):
+            showing_warning = True
+            warning_user_name = user_input
             st.warning(f"⚠️ The name '{user_input}' is already in use by another user.")
             st.info("💡 If this is your name, you can continue. Your existing analyses will be loaded.")
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                continue_btn = st.button("Continue Anyway", key="continue_existing_user")
-            with col2:
-                choose_different = st.button("Choose Different Name", key="choose_different")
-            
-            if continue_btn:
-                # Set user name directly and immediately
-                user_input_clean = user_input.strip()
-                
-                # Set all state variables explicitly
-                st.session_state.user_name = user_input_clean
-                st.session_state.user_id = get_user_id_from_name(user_input_clean)
-                st.session_state.user_initialized = True
-                
-                # Verify state is set
-                if st.session_state.get('user_initialized') and st.session_state.get('user_name') == user_input_clean:
-                    existing_count = count_user_analyses(user_input_clean)
-                    if existing_count > 0:
-                        st.success(f"✅ Welcome back, {user_input_clean}! Found {existing_count} existing analyses.")
-                    else:
-                        st.success(f"✅ Name set to: {user_input_clean}")
-                    # Force rerun to proceed to main app - this should skip the user input section
-                    st.rerun()
-                else:
-                    st.error("❌ Failed to set user name. Please try again.")
-            elif choose_different:
-                # Just rerun to clear the warning
-                st.rerun()
         else:
             # New user name, set it directly
             if set_user_name(user_input):
@@ -536,6 +527,27 @@ if not st.session_state.user_initialized:
                 st.rerun()
     elif submit_user:
         st.error("Please enter a name before continuing.")
+    
+    # Show Continue Anyway / Choose Different buttons if warning is shown
+    if showing_warning:
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            continue_btn = st.button("Continue Anyway", key="continue_existing_user")
+        with col2:
+            choose_different = st.button("Choose Different Name", key="choose_different")
+        
+        if continue_btn:
+            # Store in session state to process on next rerun
+            st.session_state.pending_user_name = warning_user_name
+            st.session_state.pending_continue_user = True
+            st.rerun()
+        elif choose_different:
+            # Clear any pending state and rerun to reset
+            if 'pending_user_name' in st.session_state:
+                del st.session_state.pending_user_name
+            if 'pending_continue_user' in st.session_state:
+                del st.session_state.pending_continue_user
+            st.rerun()
 else:
     # User is already set, show current user info
     current_user = get_user_name()
@@ -1537,19 +1549,4 @@ else:
             horizontal=True,
             key="tab_selector"
         )
-    
-    # Update session state and query params when tab changes
-    if tab_selection != st.session_state.active_tab:
-        st.session_state.active_tab = tab_selection
-        if tab_selection == "Performed Analyses":
-            st.query_params.tab = "performed"
-        else:
-            st.query_params.tab = "new"
-            # Clear selected analysis when switching to New Analysis
-            if 'selected_analysis' in st.session_state:
-                st.session_state.selected_analysis = None
-    
-    if tab_selection == "New Analysis":
-        st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
-    else:
-        display_saved_analyses()
+
