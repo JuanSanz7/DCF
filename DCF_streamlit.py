@@ -21,6 +21,30 @@ ANALYSES_DIR = BASE_DIR / "saved_analyses"
 ANALYSES_DIR.mkdir(exist_ok=True)
 ANALYSES_INDEX_FILE = ANALYSES_DIR / "analyses_index.json"
 
+def get_user_id():
+    """Get or create a user ID for the current session"""
+    if 'user_id' not in st.session_state:
+        # Generate a unique user ID based on session ID
+        import hashlib
+        session_id = st.session_state.get('_session_id', str(id(st.session_state)))
+        user_id = hashlib.md5(session_id.encode()).hexdigest()[:8]
+        st.session_state.user_id = user_id
+        st.session_state.user_name = f"User_{user_id}"
+    return st.session_state.user_id
+
+def get_user_name():
+    """Get the user's display name"""
+    if 'user_name' not in st.session_state:
+        get_user_id()  # This will set user_name
+    return st.session_state.get('user_name', f"User_{get_user_id()}")
+
+def set_user_name(name):
+    """Set a custom user name"""
+    if name and name.strip():
+        st.session_state.user_name = name.strip()
+        return True
+    return False
+
 def load_analyses_index():
     """Load the index of all saved analyses"""
     if ANALYSES_INDEX_FILE.exists():
@@ -31,6 +55,25 @@ def load_analyses_index():
             st.warning(f"Error loading analyses index: {e}. Starting with empty index.")
             return {}
     return {}
+
+def get_user_analyses_index(user_id=None):
+    """Get analyses index filtered for a specific user"""
+    if user_id is None:
+        user_id = get_user_id()
+    
+    all_index = load_analyses_index()
+    user_index = {}
+    
+    # Filter by user_id
+    for ticker, analyses in all_index.items():
+        user_analyses = {}
+        for analysis_id, analysis_info in analyses.items():
+            if analysis_info.get('user_id') == user_id:
+                user_analyses[analysis_id] = analysis_info
+        if user_analyses:
+            user_index[ticker] = user_analyses
+    
+    return user_index
 
 def save_analyses_index(index):
     """Save the index of all analyses with error handling"""
@@ -66,17 +109,23 @@ def validate_analysis_files(analysis_id):
     
     return all(f.exists() for f in required_files)
 
-def cleanup_orphaned_analyses():
-    """Remove entries from index where files no longer exist"""
+def cleanup_orphaned_analyses(user_id=None):
+    """Remove entries from index where files no longer exist (for current user only)"""
+    if user_id is None:
+        user_id = get_user_id()
+    
     index = load_analyses_index()
     cleaned = False
     
     for ticker in list(index.keys()):
         for analysis_id in list(index[ticker].keys()):
-            if not validate_analysis_files(analysis_id):
-                # File doesn't exist, remove from index
-                del index[ticker][analysis_id]
-                cleaned = True
+            analysis_info = index[ticker][analysis_id]
+            # Only clean up analyses belonging to this user
+            if analysis_info.get('user_id') == user_id:
+                if not validate_analysis_files(analysis_id):
+                    # File doesn't exist, remove from index
+                    del index[ticker][analysis_id]
+                    cleaned = True
         
         # Remove empty ticker entries
         if not index[ticker]:
@@ -110,7 +159,9 @@ def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribut
         if not plot_path.exists() or not summary_path.exists():
             raise IOError("Failed to save analysis files")
         
-        # Update index
+        # Update index with user information
+        user_id = get_user_id()
+        user_name = get_user_name()
         index = load_analyses_index()
         if ticker not in index:
             index[ticker] = {}
@@ -119,7 +170,9 @@ def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribut
             'timestamp': timestamp,
             'date': valuation_summary['date'],
             'analysis_id': analysis_id,
-            'path': str(analysis_dir.absolute())  # Store absolute path
+            'path': str(analysis_dir.absolute()),  # Store absolute path
+            'user_id': user_id,  # Store user ID for filtering
+            'user_name': user_name  # Store user name for display
         }
         
         if save_analyses_index(index):
@@ -166,38 +219,71 @@ def load_analysis(analysis_id):
         return None
 
 def delete_analysis(analysis_id):
-    """Delete an analysis from disk and index"""
+    """Delete an analysis from disk and index (only if owned by current user)"""
+    user_id = get_user_id()
     index = load_analyses_index()
     
-    # Find and remove from index
+    # Find and remove from index (only if owned by current user)
     for ticker in list(index.keys()):
         if analysis_id in index[ticker]:
-            del index[ticker][analysis_id]
-            # Remove ticker entry if no analyses left
-            if not index[ticker]:
-                del index[ticker]
-            break
-    
-    # Save updated index
-    save_analyses_index(index)
-    
-    # Delete analysis directory
-    analysis_dir = ANALYSES_DIR / analysis_id
-    if analysis_dir.exists():
-        shutil.rmtree(analysis_dir)
-    
-    # Clear selected analysis if it was the deleted one
-    if st.session_state.get('selected_analysis') == analysis_id:
-        st.session_state.selected_analysis = None
+            analysis_info = index[ticker][analysis_id]
+            # Verify ownership
+            if analysis_info.get('user_id') == user_id:
+                del index[ticker][analysis_id]
+                # Remove ticker entry if no analyses left
+                if not index[ticker]:
+                    del index[ticker]
+                
+                # Save updated index
+                save_analyses_index(index)
+                
+                # Delete analysis directory
+                analysis_dir = ANALYSES_DIR / analysis_id
+                if analysis_dir.exists():
+                    shutil.rmtree(analysis_dir)
+                
+                # Clear selected analysis if it was the deleted one
+                if st.session_state.get('selected_analysis') == analysis_id:
+                    st.session_state.selected_analysis = None
+                break
 
 def display_saved_analyses():
-    """Display the saved analyses organized by ticker"""
+    """Display the saved analyses organized by ticker (for current user only)"""
     st.header("Performed Analyses")
+    
+    # User identification section
+    user_id = get_user_id()
+    user_name = get_user_name()
+    
+    with st.expander("👤 User Settings", expanded=False):
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            new_name = st.text_input(
+                "Your Name/Identifier",
+                value=user_name,
+                key="user_name_input",
+                help="Set a name to identify your analyses. This helps separate your analyses from others using the tool."
+            )
+        with col2:
+            st.write("")  # Spacing
+            st.write("")  # Spacing
+            if st.button("Update Name", key="update_user_name"):
+                if set_user_name(new_name):
+                    st.success(f"Name updated to: {get_user_name()}")
+                    st.rerun()
+        
+        st.caption(f"**User ID:** `{user_id}` (auto-generated, unique to your session)")
+        st.info("💡 Each user has their own separate analyses. Your analyses are only visible to you.")
     
     # Show storage info
     with st.expander("ℹ️ About Analysis Storage", expanded=False):
         st.info(f"""
         **Storage Location:** Analyses are saved to: `{ANALYSES_DIR.absolute()}`
+        
+        **User Isolation:**
+        - Each user has their own separate analyses section
+        - Analyses are tagged with your user ID
+        - You can only see and manage your own analyses
         
         **Persistence:**
         - **Local deployment:** Analyses persist across app restarts
@@ -207,17 +293,22 @@ def display_saved_analyses():
         **What's Saved:**
         - Results plot (PNG image)
         - Valuation summary (JSON with all parameters and results)
-        - Analysis metadata (timestamp, company name, etc.)
+        - Analysis metadata (timestamp, company name, user info, etc.)
         """)
     
-    # Clean up orphaned entries (analyses in index but files missing)
+    # Clean up orphaned entries (analyses in index but files missing) for current user
     cleanup_orphaned_analyses()
     
-    index = load_analyses_index()
+    # Get only current user's analyses
+    index = get_user_analyses_index()
     
     if not index:
-        st.info("No analyses have been performed yet. Run a simulation to save your first analysis.")
+        st.info(f"No analyses have been performed yet. Run a simulation to save your first analysis.")
+        st.caption(f"Currently logged in as: **{get_user_name()}**")
         return
+    
+    # Show current user indicator
+    st.caption(f"👤 Showing analyses for: **{get_user_name()}**")
     
     # Initialize session state for selected analysis
     if 'selected_analysis' not in st.session_state:
@@ -1324,7 +1415,3 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
-
-
-
-
