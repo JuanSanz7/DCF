@@ -853,6 +853,57 @@ def fetch_data(ticker, target_curr):
 if 'st_vals' not in st.session_state:
     st.session_state.st_vals = {"price": 168.4, "shares": 12700.0, "cash": 96000.0, "ebit": 154740.0, "debt": 22000.0}
 
+def create_dual_input(label, min_val, max_val, value, step, key_prefix, help_text=None):
+    """
+    Create both a number input (for typing) and a slider (for dragging).
+    Both inputs are synced - you can use either one.
+    """
+    state_key = f"{key_prefix}_sync"
+    initial_val = float(value) if value else 0.0
+    
+    # Initialize or get current synced value
+    if state_key not in st.session_state:
+        st.session_state[state_key] = initial_val
+    
+    current_val = st.session_state[state_key]
+    
+    # Number input for direct typing
+    num_value = st.number_input(
+        label,
+        min_value=min_val,
+        max_value=max_val,
+        value=current_val,
+        step=step,
+        key=f"{key_prefix}_num",
+        help=(help_text or "Type a value directly") + " | Use slider below for quick adjustment"
+    )
+    
+    # Slider for dragging - syncs with number input
+    slider_value = st.slider(
+        "",
+        min_value=min_val,
+        max_value=max_val,
+        value=current_val,
+        step=step,
+        key=f"{key_prefix}_slider",
+        help="Drag to adjust the value above"
+    )
+    
+    # Determine final value: prioritize the one that changed
+    # If both are the same as current, use current
+    # If slider changed, use slider (user dragged)
+    # If number input changed, use number input (user typed)
+    final_value = current_val
+    
+    if abs(slider_value - current_val) > step / 100:  # Slider was moved
+        final_value = slider_value
+        st.session_state[state_key] = slider_value
+    elif abs(num_value - current_val) > step / 100:  # Number input was changed
+        final_value = num_value
+        st.session_state[state_key] = num_value
+    
+    return final_value
+
 # Initialize tab state
 if 'active_tab' not in st.session_state:
     st.session_state.active_tab = "New Analysis"
@@ -939,21 +990,47 @@ with st.sidebar.form("input_form"):
     # Currency se usa desde target_currency de arriba
 
     st.header("Financial Information")
+    
+    # Check which values are missing (0) and show warning
+    missing_fields = []
+    if float(st.session_state.st_vals.get('price', 0.0)) == 0:
+        missing_fields.append("Current Price")
+    if float(st.session_state.st_vals.get('shares', 0.0)) == 0:
+        missing_fields.append("Shares Outstanding")
+    if float(st.session_state.st_vals.get('cash', 0.0)) == 0:
+        missing_fields.append("Cash")
+    if float(st.session_state.st_vals.get('ebit', 0.0)) == 0:
+        missing_fields.append("Operating Income Base")
+    if float(st.session_state.st_vals.get('debt', 0.0)) == 0:
+        missing_fields.append("Debt")
+    
+    if missing_fields:
+        st.warning(f"⚠️ The following fields are 0 (not retrieved by autofetch): {', '.join(missing_fields)}. Please enter them manually.")
+    
     col1, col2 = st.columns(2)
     with col1:
         # Dynamically adjust max based on current value to accommodate fetched data
-        price_max = max(10000.0, float(st.session_state.st_vals['price']) * 2)
-        shares_max = max(100000.0, float(st.session_state.st_vals['shares']) * 2)
-        cash_max = max(1000000.0, float(st.session_state.st_vals['cash']) * 2)
-        current_price = st.slider("Current Price", min_value=0.0, max_value=price_max, value=float(st.session_state.st_vals['price']), step=0.1)
-        shares_outstanding = st.slider("Shares Outstanding (millions)", min_value=0.0, max_value=shares_max, value=float(st.session_state.st_vals['shares']), step=1.0)
-        cash = st.slider("Cash (millions)", min_value=0.0, max_value=cash_max, value=float(st.session_state.st_vals['cash']), step=100.0)
+        price_val = float(st.session_state.st_vals.get('price', 0.0))
+        shares_val = float(st.session_state.st_vals.get('shares', 0.0))
+        cash_val = float(st.session_state.st_vals.get('cash', 0.0))
+        
+        price_max = max(10000.0, price_val * 2) if price_val > 0 else 10000.0
+        shares_max = max(100000.0, shares_val * 2) if shares_val > 0 else 100000.0
+        cash_max = max(1000000.0, cash_val * 2) if cash_val > 0 else 1000000.0
+        
+        current_price = create_dual_input("Current Price", 0.0, price_max, price_val, 0.1, "price", "Enter stock price (type or use slider)")
+        shares_outstanding = create_dual_input("Shares Outstanding (millions)", 0.0, shares_max, shares_val, 1.0, "shares", "Enter shares outstanding in millions (type or use slider)")
+        cash = create_dual_input("Cash (millions)", 0.0, cash_max, cash_val, 100.0, "cash", "Enter cash in millions (type or use slider)")
     with col2:
-        ebit_max = max(1000000.0, float(st.session_state.st_vals['ebit']) * 2)
-        debt_max = max(1000000.0, float(st.session_state.st_vals['debt']) * 2)
-        operating_income_base = st.slider("Operating Income Base (millions)", min_value=0.0, max_value=ebit_max, value=float(st.session_state.st_vals['ebit']), step=100.0)
-        debt = st.slider("Debt (millions)", min_value=0.0, max_value=debt_max, value=float(st.session_state.st_vals['debt']), step=100.0)
-        tax_rate = st.slider("Tax Rate (%)", min_value=0.0, max_value=50.0, value=21.0, step=0.1) # NUEVO
+        ebit_val = float(st.session_state.st_vals.get('ebit', 0.0))
+        debt_val = float(st.session_state.st_vals.get('debt', 0.0))
+        
+        ebit_max = max(1000000.0, ebit_val * 2) if ebit_val > 0 else 1000000.0
+        debt_max = max(1000000.0, debt_val * 2) if debt_val > 0 else 1000000.0
+        
+        operating_income_base = create_dual_input("Operating Income Base (millions)", 0.0, ebit_max, ebit_val, 100.0, "ebit", "Enter operating income in millions (type or use slider)")
+        debt = create_dual_input("Debt (millions)", 0.0, debt_max, debt_val, 100.0, "debt", "Enter debt in millions (type or use slider)")
+        tax_rate = create_dual_input("Tax Rate (%)", 0.0, 50.0, 21.0, 0.1, "tax_rate", "Enter tax rate as percentage (type or use slider)")
     
     # Calculate and display implied NOPAT
     nopat_implied = operating_income_base * (1 - tax_rate / 100)
@@ -961,28 +1038,28 @@ with st.sidebar.form("input_form"):
 
     # TODOS LOS PARÁMETROS ORIGINALES
     st.header("Growth Parameters")
-    growth_rate_5y = st.slider("Growth Rate 5y (%)", min_value=-50.0, max_value=100.0, value=15.0, step=0.1)
-    growth_rate_5_10y = st.slider("Growth Rate 5-10y (%)", min_value=-50.0, max_value=100.0, value=8.0, step=0.1)
+    growth_rate_5y = create_dual_input("Growth Rate 5y (%)", -50.0, 100.0, 15.0, 0.1, "growth_5y", "Enter growth rate for first 5 years")
+    growth_rate_5_10y = create_dual_input("Growth Rate 5-10y (%)", -50.0, 100.0, 8.0, 0.1, "growth_5_10y", "Enter growth rate for years 5-10")
 
     st.header("Risk Parameters")
-    risk_free_rate = st.slider("Risk Free Rate (%)", min_value=0.0, max_value=20.0, value=4.5, step=0.01)
-    equity_risk_premium = st.slider("Equity Risk Premium (%)", min_value=0.0, max_value=15.0, value=5.13, step=0.01)
-    WACC = st.slider("WACC (%)", min_value=0.0, max_value=30.0, value=9.6, step=0.1)
+    risk_free_rate = create_dual_input("Risk Free Rate (%)", 0.0, 20.0, 4.5, 0.01, "risk_free", "Enter risk-free rate")
+    equity_risk_premium = create_dual_input("Equity Risk Premium (%)", 0.0, 15.0, 5.13, 0.01, "equity_premium", "Enter equity risk premium")
+    WACC = create_dual_input("WACC (%)", 0.0, 30.0, 9.6, 0.1, "wacc", "Enter weighted average cost of capital")
 
     st.header("Reinvestment Rates")
-    reinvestment_rate_5y = st.slider("Reinvestment Rate 5y (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.1)
-    reinvestment_rate_5_10y = st.slider("Reinvestment Rate 5-10y (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.1)
+    reinvestment_rate_5y = create_dual_input("Reinvestment Rate 5y (%)", 0.0, 100.0, 50.0, 0.1, "reinv_5y", "Enter reinvestment rate for first 5 years")
+    reinvestment_rate_5_10y = create_dual_input("Reinvestment Rate 5-10y (%)", 0.0, 100.0, 50.0, 0.1, "reinv_5_10y", "Enter reinvestment rate for years 5-10")
 
     st.header("Standard Deviations")
-    std_growth_5y = st.slider("Std Growth 5y (%)", min_value=0.0, max_value=20.0, value=2.0, step=0.1)
-    std_growth_5_10y = st.slider("Std Growth 5-10y (%)", min_value=0.0, max_value=20.0, value=3.0, step=0.1)
-    std_risk_free = st.slider("Std Risk Free (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
-    std_equity_premium = st.slider("Std Equity Premium (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
-    std_WACC = st.slider("Std WACC (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
-    std_reinv_5y = st.slider("Std Reinv 5y (%)", min_value=0.0, max_value=20.0, value=2.5, step=0.1)
-    std_reinv_5_10y = st.slider("Std Reinv 5-10y (%)", min_value=0.0, max_value=20.0, value=5.0, step=0.1)
+    std_growth_5y = create_dual_input("Std Growth 5y (%)", 0.0, 20.0, 2.0, 0.1, "std_growth_5y", "Enter standard deviation for growth rate 5y")
+    std_growth_5_10y = create_dual_input("Std Growth 5-10y (%)", 0.0, 20.0, 3.0, 0.1, "std_growth_5_10y", "Enter standard deviation for growth rate 5-10y")
+    std_risk_free = create_dual_input("Std Risk Free (%)", 0.0, 5.0, 0.5, 0.01, "std_risk_free", "Enter standard deviation for risk-free rate")
+    std_equity_premium = create_dual_input("Std Equity Premium (%)", 0.0, 5.0, 0.5, 0.01, "std_equity_premium", "Enter standard deviation for equity premium")
+    std_WACC = create_dual_input("Std WACC (%)", 0.0, 5.0, 0.5, 0.01, "std_wacc", "Enter standard deviation for WACC")
+    std_reinv_5y = create_dual_input("Std Reinv 5y (%)", 0.0, 20.0, 2.5, 0.1, "std_reinv_5y", "Enter standard deviation for reinvestment rate 5y")
+    std_reinv_5_10y = create_dual_input("Std Reinv 5-10y (%)", 0.0, 20.0, 5.0, 0.1, "std_reinv_5_10y", "Enter standard deviation for reinvestment rate 5-10y")
 
-    n_simulations = st.slider("Simulations", min_value=1000, max_value=100000, value=10000, step=1000)
+    n_simulations = create_dual_input("Simulations", 1000, 100000, 10000, 1000, "simulations", "Enter number of Monte Carlo simulations")
     submitted = st.form_submit_button("Run Simulation")
 
 # If an analysis is selected for viewing, force to else block for proper tab handling
@@ -1183,3 +1260,4 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
