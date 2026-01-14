@@ -108,17 +108,30 @@ div.stButton > button:active{
 }
 
 
-/* Make secondary buttons still readable */
-div.stButton > button[kind="secondary"]{
+/* Secondary buttons:
+   - Sidebar: keep light text on marine background
+   - Main area: black text on light background (for View/Delete in Performed Analyses)
+*/
+[data-testid="stSidebar"] div.stButton > button[kind="secondary"]{
   background: rgba(255,255,255,0.10) !important;
   color: var(--text-on-marine) !important;
   border: 1px solid rgba(255,255,255,0.20) !important;
   box-shadow: none !important;
 }
+section.main div.stButton > button[kind="secondary"]{
+  background: #f3f4f6 !important;
+  color: #111827 !important; /* near-black */
+  border: 1px solid rgba(17,24,39,0.18) !important;
+  box-shadow: none !important;
+}
+section.main div.stButton > button[kind="secondary"]:hover{
+  background: #e5e7eb !important;
+}
 </style>
 """,
     unsafe_allow_html=True,
 )
+
 
 import matplotlib.pyplot as plt
 import io
@@ -1691,6 +1704,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
