@@ -1,9 +1,17 @@
+# IMPORTANT: st.set_page_config must be the first Streamlit command
+import streamlit as st
+st.set_page_config(page_title="DCF Monte Carlo Valuation Tool", layout="wide")
+
+import matplotlib.pyplot as plt
+import io
+import yfinance as yf
+import json
+import os
 import shutil
+import requests
 from datetime import datetime
 from pathlib import Path
 from DCF_main import run_monte_carlo_simulation
-
-st.set_page_config(page_title="DCF Monte Carlo Valuation Tool", layout="wide")
 st.title("DCF Monte Carlo Valuation Tool")
 
 # --- ANALYSIS STORAGE FUNCTIONS ---
@@ -217,6 +225,371 @@ def display_analysis(analysis_id):
             </div>
         """, unsafe_allow_html=True)
 
+# --- TICKER SEARCH FUNCTIONALITY ---
+@st.cache_data(ttl=86400)  # Cache for 24 hours
+def get_ticker_database():
+    """Get a comprehensive list of major world stocks"""
+    return {
+        # US Stocks
+        'AAPL': 'Apple Inc.',
+        'GOOGL': 'Alphabet Inc. (Class A)',
+        'GOOG': 'Alphabet Inc. (Class C)',
+        'MSFT': 'Microsoft Corporation',
+        'AMZN': 'Amazon.com Inc.',
+        'META': 'Meta Platforms Inc.',
+        'TSLA': 'Tesla Inc.',
+        'NVDA': 'NVIDIA Corporation',
+        'JPM': 'JPMorgan Chase & Co.',
+        'V': 'Visa Inc.',
+        'JNJ': 'Johnson & Johnson',
+        'WMT': 'Walmart Inc.',
+        'MA': 'Mastercard Inc.',
+        'PG': 'Procter & Gamble',
+        'UNH': 'UnitedHealth Group',
+        'HD': 'The Home Depot',
+        'DIS': 'The Walt Disney Company',
+        'BAC': 'Bank of America',
+        'XOM': 'Exxon Mobil',
+        'CVX': 'Chevron Corporation',
+        'ABBV': 'AbbVie Inc.',
+        'PFE': 'Pfizer Inc.',
+        'AVGO': 'Broadcom Inc.',
+        'COST': 'Costco Wholesale',
+        'MRK': 'Merck & Co.',
+        'ABT': 'Abbott Laboratories',
+        'TMO': 'Thermo Fisher Scientific',
+        'ACN': 'Accenture',
+        'CSCO': 'Cisco Systems',
+        'NFLX': 'Netflix Inc.',
+        'AMD': 'Advanced Micro Devices',
+        'INTC': 'Intel Corporation',
+        'CMCSA': 'Comcast Corporation',
+        'ADBE': 'Adobe Inc.',
+        'NKE': 'Nike Inc.',
+        'TXN': 'Texas Instruments',
+        'QCOM': 'Qualcomm Inc.',
+        'HON': 'Honeywell International',
+        'AMGN': 'Amgen Inc.',
+        'SBUX': 'Starbucks Corporation',
+        'GILD': 'Gilead Sciences',
+        'MDT': 'Medtronic',
+        'ISRG': 'Intuitive Surgical',
+        'VZ': 'Verizon Communications',
+        'LMT': 'Lockheed Martin',
+        'RTX': 'Raytheon Technologies',
+        'UPS': 'United Parcel Service',
+        'BMY': 'Bristol-Myers Squibb',
+        'PM': 'Philip Morris International',
+        'T': 'AT&T Inc.',
+        'DE': 'Deere & Company',
+        'CAT': 'Caterpillar Inc.',
+        'GS': 'Goldman Sachs',
+        'MS': 'Morgan Stanley',
+        'BLK': 'BlackRock',
+        'AXP': 'American Express',
+        'SPGI': 'S&P Global',
+        'INTU': 'Intuit Inc.',
+        'BKNG': 'Booking Holdings',
+        'ADI': 'Analog Devices',
+        'AMAT': 'Applied Materials',
+        'KLAC': 'KLA Corporation',
+        'LRCX': 'Lam Research',
+        'CDNS': 'Cadence Design Systems',
+        'SNPS': 'Synopsys',
+        'CRWD': 'CrowdStrike',
+        'PANW': 'Palo Alto Networks',
+        'FTNT': 'Fortinet',
+        'ZS': 'Zscaler',
+        'NET': 'Cloudflare',
+        'DDOG': 'Datadog',
+        'MDB': 'MongoDB',
+        'NOW': 'ServiceNow',
+        'TEAM': 'Atlassian',
+        'WDAY': 'Workday',
+        'VEEV': 'Veeva Systems',
+        'ZM': 'Zoom Video Communications',
+        'DOCN': 'DigitalOcean',
+        'GTLB': 'GitLab',
+        'ESTC': 'Elastic',
+        'FROG': 'JFrog',
+        'PATH': 'UiPath',
+        'BILL': 'Bill.com',
+        'COUP': 'Coupa Software',
+        'OKTA': 'Okta',
+        'SPLK': 'Splunk',
+        'QLYS': 'Qualys',
+        'RPD': 'Rapid7',
+        'TENB': 'Tenable',
+        'VRNS': 'Varonis Systems',
+        'RDWR': 'Radware',
+        'CHKP': 'Check Point Software',
+        'QLYS': 'Qualys',
+        'RDWR': 'Radware',
+        'CHKP': 'Check Point Software',
+        'FTNT': 'Fortinet',
+        'ZS': 'Zscaler',
+        'NET': 'Cloudflare',
+        'DDOG': 'Datadog',
+        'MDB': 'MongoDB',
+        'NOW': 'ServiceNow',
+        'TEAM': 'Atlassian',
+        'WDAY': 'Workday',
+        'VEEV': 'Veeva Systems',
+        'ZM': 'Zoom Video Communications',
+        'DOCN': 'DigitalOcean',
+        'GTLB': 'GitLab',
+        'ESTC': 'Elastic',
+        'FROG': 'JFrog',
+        'PATH': 'UiPath',
+        'BILL': 'Bill.com',
+        'COUP': 'Coupa Software',
+        'OKTA': 'Okta',
+        'SPLK': 'Splunk',
+        'QLYS': 'Qualys',
+        'RPD': 'Rapid7',
+        'TENB': 'Tenable',
+        'VRNS': 'Varonis Systems',
+        'RDWR': 'Radware',
+        'CHKP': 'Check Point Software',
+        # European Stocks
+        'NVO': 'Novo Nordisk A/S',
+        'NVO.CO': 'Novo Nordisk A/S (Copenhagen)',
+        'ASML': 'ASML Holding N.V.',
+        'ASML.AS': 'ASML Holding (Amsterdam)',
+        'SAP': 'SAP SE',
+        'SAP.DE': 'SAP SE (Germany)',
+        'SHEL': 'Shell plc',
+        'SHEL.L': 'Shell plc (London)',
+        'BP': 'BP p.l.c.',
+        'BP.L': 'BP p.l.c. (London)',
+        'GSK': 'GSK plc',
+        'GSK.L': 'GSK plc (London)',
+        'AZN': 'AstraZeneca',
+        'AZN.L': 'AstraZeneca (London)',
+        'UL': 'Unilever',
+        'ULVR.L': 'Unilever (London)',
+        'DEO': 'Diageo',
+        'DEO.L': 'Diageo (London)',
+        'RDS-A': 'Royal Dutch Shell',
+        'RDS-B': 'Royal Dutch Shell',
+        'BTI': 'British American Tobacco',
+        'BTI.L': 'British American Tobacco (London)',
+        'RIO': 'Rio Tinto',
+        'RIO.L': 'Rio Tinto (London)',
+        'BHP': 'BHP Group',
+        'BHP.L': 'BHP Group (London)',
+        'GLEN.L': 'Glencore (London)',
+        'NG': 'National Grid',
+        'NG.L': 'National Grid (London)',
+        'VOD': 'Vodafone',
+        'VOD.L': 'Vodafone (London)',
+        'TSCO.L': 'Tesco (London)',
+        'SBRY.L': 'Sainsbury\'s (London)',
+        'MKS.L': 'Marks & Spencer (London)',
+        'NXT.L': 'Next (London)',
+        'JD.L': 'JD Sports (London)',
+        'FRES.L': 'Fresnillo (London)',
+        'POLY.L': 'Polymetal (London)',
+        'AAL.L': 'Anglo American (London)',
+        'ANTO.L': 'Antofagasta (London)',
+        'EVR.L': 'Evercore (London)',
+        'FERG.L': 'Ferguson (London)',
+        'FOUR.L': '4imprint (London)',
+        'GFTU.L': 'Grafton (London)',
+        'HWDN.L': 'Howden Joinery (London)',
+        'IHG.L': 'InterContinental Hotels (London)',
+        'JD.L': 'JD Sports Fashion (London)',
+        'KGF.L': 'Kingfisher (London)',
+        'LAND.L': 'Land Securities (London)',
+        'LGEN.L': 'Legal & General (London)',
+        'LLOY.L': 'Lloyds Banking (London)',
+        'MKS.L': 'Marks & Spencer (London)',
+        'NXT.L': 'Next (London)',
+        'OCDO.L': 'Ocado (London)',
+        'PSN.L': 'Persimmon (London)',
+        'RTO.L': 'Rentokil Initial (London)',
+        'SBRY.L': 'Sainsbury\'s (London)',
+        'SGE.L': 'Sage Group (London)',
+        'SGRO.L': 'Segro (London)',
+        'SN.L': 'Smith & Nephew (London)',
+        'SPX.L': 'Spirax-Sarco Engineering (London)',
+        'SSE.L': 'SSE (London)',
+        'STAN.L': 'Standard Chartered (London)',
+        'STJ.L': 'St. James\'s Place (London)',
+        'SVT.L': 'Severn Trent (London)',
+        'TSCO.L': 'Tesco (London)',
+        'TW.L': 'Taylor Wimpey (London)',
+        'ULVR.L': 'Unilever (London)',
+        'VOD.L': 'Vodafone (London)',
+        'WEIR.L': 'Weir Group (London)',
+        'WTB.L': 'Whitbread (London)',
+        # Asian Stocks
+        'TSM': 'Taiwan Semiconductor',
+        'TSM.TW': 'Taiwan Semiconductor (Taiwan)',
+        'BABA': 'Alibaba Group',
+        'BABA.HK': 'Alibaba Group (Hong Kong)',
+        'JD': 'JD.com',
+        'JD.HK': 'JD.com (Hong Kong)',
+        'PDD': 'Pinduoduo',
+        'PDD.HK': 'Pinduoduo (Hong Kong)',
+        'BIDU': 'Baidu',
+        'BIDU.HK': 'Baidu (Hong Kong)',
+        'NIO': 'NIO Inc.',
+        'NIO.HK': 'NIO Inc. (Hong Kong)',
+        'XPEV': 'XPeng',
+        'XPEV.HK': 'XPeng (Hong Kong)',
+        'LI': 'Li Auto',
+        'LI.HK': 'Li Auto (Hong Kong)',
+        'TME': 'Tencent Music',
+        'TME.HK': 'Tencent Music (Hong Kong)',
+        'NTES': 'NetEase',
+        'NTES.HK': 'NetEase (Hong Kong)',
+        'WB': 'Weibo',
+        'WB.HK': 'Weibo (Hong Kong)',
+        'DOYU': 'DouYu',
+        'DOYU.HK': 'DouYu (Hong Kong)',
+        'HUYA': 'Huya',
+        'HUYA.HK': 'Huya (Hong Kong)',
+        'YY': 'YY Inc.',
+        'YY.HK': 'YY Inc. (Hong Kong)',
+        'VIPS': 'Vipshop',
+        'VIPS.HK': 'Vipshop (Hong Kong)',
+        'WB': 'Weibo',
+        'WB.HK': 'Weibo (Hong Kong)',
+        # Canadian Stocks
+        'SHOP': 'Shopify',
+        'SHOP.TO': 'Shopify (Toronto)',
+        'RY': 'Royal Bank of Canada',
+        'RY.TO': 'Royal Bank of Canada (Toronto)',
+        'TD': 'TD Bank',
+        'TD.TO': 'TD Bank (Toronto)',
+        'BNS': 'Bank of Nova Scotia',
+        'BNS.TO': 'Bank of Nova Scotia (Toronto)',
+        'BMO': 'Bank of Montreal',
+        'BMO.TO': 'Bank of Montreal (Toronto)',
+        'CM': 'Canadian Imperial Bank',
+        'CM.TO': 'Canadian Imperial Bank (Toronto)',
+        'ENB': 'Enbridge',
+        'ENB.TO': 'Enbridge (Toronto)',
+        'TRP': 'TC Energy',
+        'TRP.TO': 'TC Energy (Toronto)',
+        'CP': 'Canadian Pacific',
+        'CP.TO': 'Canadian Pacific (Toronto)',
+        'CNR': 'Canadian National Railway',
+        'CNR.TO': 'Canadian National Railway (Toronto)',
+        'ATD': 'Alimentation Couche-Tard',
+        'ATD.TO': 'Alimentation Couche-Tard (Toronto)',
+        'WCN': 'Waste Connections',
+        'WCN.TO': 'Waste Connections (Toronto)',
+        'FNV': 'Franco-Nevada',
+        'FNV.TO': 'Franco-Nevada (Toronto)',
+        'WPM': 'Wheaton Precious Metals',
+        'WPM.TO': 'Wheaton Precious Metals (Toronto)',
+        'NTR': 'Nutrien',
+        'NTR.TO': 'Nutrien (Toronto)',
+        'SU': 'Suncor Energy',
+        'SU.TO': 'Suncor Energy (Toronto)',
+        'IMO': 'Imperial Oil',
+        'IMO.TO': 'Imperial Oil (Toronto)',
+        'CVE': 'Cenovus Energy',
+        'CVE.TO': 'Cenovus Energy (Toronto)',
+        'MEG': 'MEG Energy',
+        'MEG.TO': 'MEG Energy (Toronto)',
+        'TOU': 'Tourmaline Oil',
+        'TOU.TO': 'Tourmaline Oil (Toronto)',
+        'ARX': 'ARC Resources',
+        'ARX.TO': 'ARC Resources (Toronto)',
+        'PPL': 'Pembina Pipeline',
+        'PPL.TO': 'Pembina Pipeline (Toronto)',
+        'KEY': 'Keyera',
+        'KEY.TO': 'Keyera (Toronto)',
+        'IPL': 'Inter Pipeline',
+        'IPL.TO': 'Inter Pipeline (Toronto)',
+        'PXT': 'Parex Resources',
+        'PXT.TO': 'Parex Resources (Toronto)',
+        'VET': 'Vermilion Energy',
+        'VET.TO': 'Vermilion Energy (Toronto)',
+        'BAY': 'Baytex Energy',
+        'BAY.TO': 'Baytex Energy (Toronto)',
+        'CR': 'Crew Energy',
+        'CR.TO': 'Crew Energy (Toronto)',
+        'GTE': 'Gran Tierra Energy',
+        'GTE.TO': 'Gran Tierra Energy (Toronto)',
+        'TVE': 'Tamarack Valley Energy',
+        'TVE.TO': 'Tamarack Valley Energy (Toronto)',
+        'WCP': 'Whitecap Resources',
+        'WCP.TO': 'Whitecap Resources (Toronto)',
+        'TOU': 'Tourmaline Oil',
+        'TOU.TO': 'Tourmaline Oil (Toronto)',
+        'ARX': 'ARC Resources',
+        'ARX.TO': 'ARC Resources (Toronto)',
+        'PPL': 'Pembina Pipeline',
+        'PPL.TO': 'Pembina Pipeline (Toronto)',
+        'KEY': 'Keyera',
+        'KEY.TO': 'Keyera (Toronto)',
+        'IPL': 'Inter Pipeline',
+        'IPL.TO': 'Inter Pipeline (Toronto)',
+        'PXT': 'Parex Resources',
+        'PXT.TO': 'Parex Resources (Toronto)',
+        'VET': 'Vermilion Energy',
+        'VET.TO': 'Vermilion Energy (Toronto)',
+        'BAY': 'Baytex Energy',
+        'BAY.TO': 'Baytex Energy (Toronto)',
+        'CR': 'Crew Energy',
+        'CR.TO': 'Crew Energy (Toronto)',
+        'GTE': 'Gran Tierra Energy',
+        'GTE.TO': 'Gran Tierra Energy (Toronto)',
+        'TVE': 'Tamarack Valley Energy',
+        'TVE.TO': 'Tamarack Valley Energy (Toronto)',
+        'WCP': 'Whitecap Resources',
+        'WCP.TO': 'Whitecap Resources (Toronto)',
+    }
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def search_tickers(query):
+    """Search for ticker symbols using ticker database"""
+    if not query or len(query) < 1:
+        return []
+    
+    results = []
+    query_upper = query.upper()
+    ticker_db = get_ticker_database()
+    
+    # Search through database
+    for ticker, name in ticker_db.items():
+        if query_upper in ticker.upper() or query_upper in name.upper():
+            results.append({
+                'ticker': ticker,
+                'name': name,
+                'exchange': ''
+            })
+    
+    # Try to validate ticker by attempting to fetch info (for tickers not in database)
+    if len(results) < 5 and len(query_upper) >= 1:
+        # Try the query as a ticker directly
+        try:
+            tk = yf.Ticker(query_upper)
+            info = tk.info
+            if info and len(info) > 0:
+                name = info.get('longName') or info.get('shortName') or query_upper
+                results.insert(0, {
+                    'ticker': query_upper,
+                    'name': name,
+                    'exchange': info.get('exchange', '')
+                })
+        except:
+            pass
+    
+    # Remove duplicates
+    seen = set()
+    unique_results = []
+    for r in results:
+        if r['ticker'] not in seen:
+            seen.add(r['ticker'])
+            unique_results.append(r)
+    
+    return unique_results[:20]  # Limit to 20 results
+
 # --- LÓGICA DE RECUPERACIÓN ---
 def fetch_data(ticker, target_curr):
     # Try different ticker formats (some stocks need exchange suffixes)
@@ -311,8 +684,55 @@ if 'active_tab' not in st.session_state:
 
 with st.sidebar:
     st.header("1. Automatic Search")
-    t_input = st.text_input("Ticker", value="GOOGL").upper()
+    
+    # Initialize ticker search state
+    if 'ticker_search_query' not in st.session_state:
+        st.session_state.ticker_search_query = "GOOGL"
+    if 'ticker_suggestions' not in st.session_state:
+        st.session_state.ticker_suggestions = []
+    if 'selected_ticker' not in st.session_state:
+        st.session_state.selected_ticker = "GOOGL"
+    
+    # Ticker search input with autocomplete
+    search_query = st.text_input(
+        "Search Ticker (type to see suggestions)", 
+        value=st.session_state.ticker_search_query,
+        key="ticker_search",
+        help="Start typing a ticker symbol or company name to see suggestions"
+    ).upper()
+    
+    # Update suggestions as user types
+    if search_query and len(search_query) >= 1:
+        suggestions = search_tickers(search_query)
+        st.session_state.ticker_suggestions = suggestions
+        
+        if suggestions:
+            # Create a list of display strings for the selectbox
+            suggestion_options = [f"{s['ticker']} - {s['name']}" for s in suggestions]
+            suggestion_options.insert(0, f"{search_query} (use as-is)")
+            
+            selected_option = st.selectbox(
+                "Select from suggestions or use your input:",
+                options=suggestion_options,
+                key="ticker_select",
+                help="Choose a ticker from the suggestions or use your typed input"
+            )
+            
+            # Extract ticker from selection
+            if selected_option and selected_option != f"{search_query} (use as-is)":
+                t_input = selected_option.split(" - ")[0]
+            else:
+                t_input = search_query
+        else:
+            t_input = search_query
+            st.info(f"No suggestions found. Using '{search_query}' as ticker.")
+    else:
+        t_input = search_query if search_query else "GOOGL"
+    
+    st.session_state.ticker_search_query = t_input
+    
     target_currency = st.text_input("Target Currency", value="USD").upper()
+    
     if st.button("Fetch & Auto-fill"):
         with st.spinner(f"Fetching data for {t_input}..."):
             res = fetch_data(t_input, target_currency)
