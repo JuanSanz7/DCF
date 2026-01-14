@@ -473,26 +473,29 @@ if 'user_initialized' not in st.session_state:
 # CRITICAL: Check if user was just initialized from "Continue Anyway" button
 # This must be checked FIRST before any other state checks
 if st.session_state.get('_just_initialized_user') and st.session_state.get('_pending_user_name'):
-    pending_name = st.session_state.get('_pending_user_name')
-    # Ensure state is definitely set
-    st.session_state['user_name'] = pending_name
-    st.session_state['user_id'] = get_user_id_from_name(pending_name)
-    st.session_state['user_initialized'] = True
-    # Clear the flags
-    del st.session_state['_just_initialized_user']
-    del st.session_state['_pending_user_name']
-    # State is now set, continue with normal flow
+    pending_name = str(st.session_state.get('_pending_user_name')).strip()
+    if pending_name:
+        # Ensure state is definitely set using all methods
+        st.session_state.user_name = pending_name
+        st.session_state['user_name'] = pending_name
+        st.session_state.user_id = get_user_id_from_name(pending_name)
+        st.session_state['user_id'] = get_user_id_from_name(pending_name)
+        st.session_state.user_initialized = True
+        st.session_state['user_initialized'] = True
+        # Clear the flags
+        if '_just_initialized_user' in st.session_state:
+            del st.session_state['_just_initialized_user']
+        if '_pending_user_name' in st.session_state:
+            del st.session_state['_pending_user_name']
 
 # CRITICAL: Check and set user state BEFORE any conditionals
-# This must happen first to ensure state persists across reruns
-# Check if user_name exists in session state and is valid
+# If user_name exists and is valid, ensure initialized is True
 user_name_from_state = st.session_state.get('user_name')
 if user_name_from_state:
     try:
         user_name_val = str(user_name_from_state).strip()
         if user_name_val:
             # If user_name exists and is valid, ensure initialized is True
-            # Use explicit assignment to ensure state is set
             st.session_state['user_name'] = user_name_val
             st.session_state['user_id'] = get_user_id_from_name(user_name_val)
             st.session_state['user_initialized'] = True
@@ -503,26 +506,23 @@ if user_name_from_state:
         # If user_name is not a valid string, reset it
         st.session_state['user_name'] = None
         st.session_state['user_initialized'] = False
-elif 'user_name' in st.session_state and st.session_state.get('user_name') is None:
-    # user_name is explicitly None, ensure initialized is False
-    st.session_state['user_initialized'] = False
 
-# User name input - only show if user is not initialized
-# This check happens AFTER we've ensured state is consistent
-# Use explicit True check to avoid any truthiness issues
-# Also check if user_name exists as a fallback
+# Determine if user is initialized - use simple, direct check
 user_is_initialized = (
     st.session_state.get('user_initialized') is True and 
     st.session_state.get('user_name') is not None and 
     str(st.session_state.get('user_name', '')).strip() != ''
 )
 
-# Final safeguard: if user_name exists but initialized is not True, fix it
-if (st.session_state.get('user_name') and 
-    str(st.session_state.get('user_name', '')).strip() != '' and 
-    st.session_state.get('user_initialized') is not True):
+# FINAL SAFEGUARD: If user_name exists but initialized check failed, fix it
+if (not user_is_initialized and 
+    st.session_state.get('user_name') and 
+    str(st.session_state.get('user_name', '')).strip() != ''):
+    # Force initialization
+    user_name_fix = str(st.session_state.get('user_name')).strip()
+    st.session_state['user_name'] = user_name_fix
+    st.session_state['user_id'] = get_user_id_from_name(user_name_fix)
     st.session_state['user_initialized'] = True
-    st.session_state['user_id'] = get_user_id_from_name(str(st.session_state.get('user_name')).strip())
     user_is_initialized = True
 
 if not user_is_initialized:
@@ -573,22 +573,18 @@ if not user_is_initialized:
             # Set user name directly and immediately
             user_input_clean = warning_user_name.strip()
             if user_input_clean:
-                # Use the set_user_name function which properly sets all state
-                if set_user_name(user_input_clean):
-                    # Also set explicitly to ensure it's definitely set
-                    st.session_state['user_name'] = user_input_clean
-                    st.session_state['user_id'] = get_user_id_from_name(user_input_clean)
-                    st.session_state['user_initialized'] = True
-                    
-                    # CRITICAL: Set a flag to indicate we just initialized
-                    # This will be checked at the very top of the next run
-                    st.session_state['_just_initialized_user'] = True
-                    st.session_state['_pending_user_name'] = user_input_clean
-                    
-                    # Force immediate rerun
-                    st.rerun()
-                else:
-                    st.error("❌ Failed to set user name. Please try again.")
+                # Set state using multiple methods to ensure it persists
+                set_user_name(user_input_clean)
+                st.session_state['user_name'] = user_input_clean
+                st.session_state['user_id'] = get_user_id_from_name(user_input_clean)
+                st.session_state['user_initialized'] = True
+                
+                # Set flags for the next rerun
+                st.session_state['_just_initialized_user'] = True
+                st.session_state['_pending_user_name'] = user_input_clean
+                
+                # CRITICAL: Force rerun immediately - state should be recognized
+                st.rerun()
         elif choose_different:
             # Just rerun to clear the warning
             st.rerun()
