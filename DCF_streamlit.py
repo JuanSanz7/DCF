@@ -35,26 +35,25 @@ st.markdown(
 /* Inputs inside sidebar */
 [data-testid="stSidebar"] input,
 [data-testid="stSidebar"] textarea{
-  background: rgba(255,255,255,0.08) !important;
-  border: 1px solid rgba(255,255,255,0.18) !important;
-  color: var(--text-on-marine) !important;
+  background: #ffffff !important;
+  border: 1px solid rgba(0,0,0,0.12) !important;
+  color: #000000 !important;
   border-radius: var(--radius) !important;
 }
+[data-testid="stSidebar"] input::placeholder,
+[data-testid="stSidebar"] textarea::placeholder{
+  color: rgba(0,0,0,0.55) !important;
+}
 [data-testid="stSidebar"] [data-baseweb="select"] > div{
-  background: rgba(255,255,255,0.08) !important;
-  border: 1px solid rgba(255,255,255,0.18) !important;
+  background: #ffffff !important;
+  border: 1px solid rgba(0,0,0,0.12) !important;
   border-radius: var(--radius) !important;
 }
 [data-testid="stSidebar"] [data-baseweb="select"] *{
-  color: var(--text-on-marine) !important;
+  color: #000000 !important;
 }
 [data-testid="stSidebar"] label{
   color: var(--muted-on-marine) !important;
-}
-
-/* Slider colors */
-[data-testid="stSidebar"] [data-baseweb="slider"] [role="slider"]{
-  background-color: var(--accent-500) !important;
 }
 
 /* Filled buttons (global) */
@@ -1656,6 +1655,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
