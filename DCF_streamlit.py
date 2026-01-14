@@ -90,6 +90,19 @@ div.stButton > button:active{
 .run-sim-btn div.stFormSubmitButton > button:hover{
   background: #15803d !important;
 }
+/* Ensure disabled/greyed state is still readable */
+.run-sim-btn div.stButton > button:disabled,
+.run-sim-btn div.stFormSubmitButton > button:disabled,
+.run-sim-btn div.stButton > button[disabled],
+.run-sim-btn div.stFormSubmitButton > button[disabled],
+.run-sim-btn div.stButton > button[aria-disabled="true"],
+.run-sim-btn div.stFormSubmitButton > button[aria-disabled="true"]{
+  background: #0f6d2e !important; /* dark green */
+  color: #ffffff !important;
+  opacity: 1 !important;
+  filter: none !important;
+  box-shadow: 0 10px 22px rgba(15,109,46,0.18) !important;
+}
 
 /* Make secondary buttons still readable */
 div.stButton > button[kind="secondary"]{
