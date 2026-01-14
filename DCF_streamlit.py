@@ -592,11 +592,22 @@ def search_tickers(query):
 
 # --- LÓGICA DE RECUPERACIÓN ---
 def fetch_data(ticker, target_curr):
+    """
+    Fetch financial data for a ticker using yfinance.
+    Returns a dict with price, shares, cash, ebit, debt or None if failed.
+    """
+    import time
+    
+    # Clean the ticker
+    ticker = ticker.strip().upper()
+    if not ticker:
+        return None
+    
     # Try different ticker formats (some stocks need exchange suffixes)
     ticker_variants = [ticker]
     
     # Common exchange suffixes to try (only if ticker doesn't already have an exchange suffix)
-    if "." not in ticker and len(ticker) <= 5:  # Only try variants for short tickers without exchange
+    if "." not in ticker and len(ticker) <= 5:
         ticker_variants.extend([
             f"{ticker}.CO",  # Copenhagen (e.g., NVO.CO for Novo Nordisk)
             f"{ticker}.TO",  # Toronto
@@ -607,69 +618,233 @@ def fetch_data(ticker, target_curr):
             f"{ticker}.AS",  # Amsterdam
         ])
     
+    last_error = None
     for ticker_to_try in ticker_variants:
         try:
+            # Create ticker object
             tk = yf.Ticker(ticker_to_try)
-            info = tk.info
             
-            # Check if info is valid and has data
-            if not info or len(info) == 0:
+            # First, try to get price from history (more reliable)
+            price_from_history = None
+            try:
+                hist = tk.history(period="5d")
+                if not hist.empty and len(hist) > 0:
+                    price_from_history = float(hist['Close'].iloc[-1])
+            except:
+                pass
+            
+            # Try to get info - this can sometimes fail or return empty dict
+            # Add a small delay to avoid rate limiting
+            time.sleep(0.1)
+            info = None
+            try:
+                info = tk.info
+            except:
+                # If info fails, we can still use history data
+                if price_from_history and price_from_history > 0:
+                    # Return minimal data with price from history
+                    return {
+                        "price": price_from_history,
+                        "shares": 1e9,  # Default
+                        "cash": 0,
+                        "ebit": 0,
+                        "debt": 0,
+                    }
                 continue
             
-            # Check for required fields - try multiple price fields
-            price = (info.get("currentPrice") or 
-                    info.get("regularMarketPrice") or 
-                    info.get("previousClose") or 
-                    info.get("open") or
-                    info.get("regularMarketPreviousClose"))
-            
-            if price is None or price == 0:
-                continue
-            
-            native_curr = info.get("currency", "USD")
-            
-            # Get shares outstanding, try multiple field names
-            shares = (info.get("sharesOutstanding") or 
-                     info.get("impliedSharesOutstanding") or
-                     info.get("sharesShort"))
-            
-            if shares is None or shares == 0:
-                # Try to get from market cap and price
-                market_cap = info.get("marketCap") or info.get("enterpriseValue")
-                if market_cap and price:
-                    shares = market_cap / price
-                else:
-                    continue
-            
-            # Get financial data with fallbacks
-            cash = info.get("totalCash") or info.get("totalCashPerShare", 0) * shares if info.get("totalCashPerShare") else 0
-            ebitda = info.get("ebitda") or info.get("operatingIncome") or 0
-            debt = info.get("totalDebt") or info.get("totalDebt") or 0
-            
-            data = {
-                "price": float(price),
-                "shares": float(shares) / 1e6,
-                "cash": float(cash) / 1e6,
-                "ebit": float(ebitda) * 0.85 / 1e6 if ebitda else 0,
-                "debt": float(debt) / 1e6,
-            }
-            
-            # Handle currency conversion
-            if target_curr != native_curr:
+            # If info is empty or invalid, try fast_info as fallback
+            if not info or (isinstance(info, dict) and len(info) < 5):
                 try:
-                    rate_ticker = yf.Ticker(f"{native_curr}{target_curr}=X")
-                    rate_history = rate_ticker.history(period="1d")
-                    if not rate_history.empty:
-                        rate = rate_history['Close'].iloc[-1]
-                        for k in ["price", "cash", "ebit", "debt"]: 
-                            data[k] *= rate
+                    fast_info = tk.fast_info
+                    if fast_info:
+                        # Merge fast_info into info if available
+                        if isinstance(info, dict):
+                            info.update(fast_info)
+                        else:
+                            info = fast_info
                 except:
-                    # If currency conversion fails, continue with native currency
                     pass
             
-            return data
+            # Check if info is valid - sometimes yfinance returns empty dict or dict with error
+            if not info:
+                continue
+                
+            # Check for common error indicators in yfinance response
+            if isinstance(info, dict):
+                # Check for explicit error fields
+                if 'error' in info or 'Error' in info:
+                    continue
+                    
+                # Check if we have at least some basic info (but be lenient - some tickers have minimal data)
+                if len(info) < 3:
+                    continue
+                    
+                # Check for quoteType to ensure it's a valid security
+                # But don't fail if it's missing - some exchanges don't provide this
+                if 'quoteType' in info and info.get('quoteType') == 'NONE':
+                    continue
+            
+            # Try to get price - use history first if available, then try info fields
+            price = price_from_history
+            
+            if price is None or price <= 0:
+                # Try info fields
+                price_fields = [
+                    "currentPrice",
+                    "regularMarketPrice", 
+                    "previousClose",
+                    "regularMarketPreviousClose",
+                    "open",
+                    "ask",
+                    "bid",
+                    "lastPrice"
+                ]
+                
+                for field in price_fields:
+                    if info and field in info and info[field] is not None:
+                        price_val = info[field]
+                        if isinstance(price_val, (int, float)) and price_val > 0:
+                            price = float(price_val)
+                            break
+            
+            # Final fallback: try history again if we still don't have price
+            if (price is None or price <= 0) and not price_from_history:
+                try:
+                    hist = tk.history(period="1d")
+                    if not hist.empty and len(hist) > 0:
+                        price = float(hist['Close'].iloc[-1])
+                except:
+                    pass
+            
+            if price is None or price <= 0:
+                continue
+            
+            # Get currency
+            native_curr = info.get("currency", "USD")
+            if not native_curr:
+                native_curr = "USD"
+            
+            # Get shares outstanding - try multiple methods
+            shares = None
+            
+            # Method 1: Direct field
+            shares_fields = [
+                "sharesOutstanding",
+                "impliedSharesOutstanding", 
+                "sharesShort",
+                "floatShares",
+                "sharesShortPriorMonth"
+            ]
+            
+            for field in shares_fields:
+                if field in info and info[field] is not None:
+                    shares_val = info[field]
+                    if isinstance(shares_val, (int, float)) and shares_val > 0:
+                        shares = float(shares_val)
+                        break
+            
+            # Method 2: Calculate from market cap
+            if shares is None or shares <= 0:
+                market_cap = info.get("marketCap") or info.get("enterpriseValue")
+                if market_cap and isinstance(market_cap, (int, float)) and market_cap > 0 and price > 0:
+                    shares = float(market_cap) / price
+            
+            # Method 3: Use shares outstanding from financials
+            if (shares is None or shares <= 0) and 'sharesOutstanding' in info:
+                shares_val = info['sharesOutstanding']
+                if isinstance(shares_val, (int, float)) and shares_val > 0:
+                    shares = float(shares_val)
+            
+            # If shares still not found, use a default or calculate from market cap
+            if shares is None or shares <= 0:
+                # Try one more time with marketCap
+                market_cap = info.get("marketCap")
+                if market_cap and price > 0:
+                    shares = market_cap / price
+                # If still no shares, use a default (user can adjust)
+                if shares is None or shares <= 0:
+                    # Default to 1 billion shares if we can't determine
+                    shares = 1e9
+            
+            # Get cash - try multiple fields
+            cash = 0
+            cash_fields = ["totalCash", "totalCashPerShare", "cash", "cashAndCashEquivalents"]
+            for field in cash_fields:
+                if field in info and info[field] is not None:
+                    cash_val = info[field]
+                    if isinstance(cash_val, (int, float)) and cash_val >= 0:
+                        if "PerShare" in field and shares > 0:
+                            cash = float(cash_val) * shares
+                        else:
+                            cash = float(cash_val)
+                        break
+            
+            # Get EBITDA/Operating Income
+            ebitda = 0
+            ebitda_fields = ["ebitda", "operatingIncome", "ebit", "operatingCashflow"]
+            for field in ebitda_fields:
+                if field in info and info[field] is not None:
+                    ebitda_val = info[field]
+                    if isinstance(ebitda_val, (int, float)):
+                        ebitda = float(ebitda_val)
+                        break
+            
+            # Get debt
+            debt = 0
+            debt_fields = ["totalDebt", "totalDebt", "longTermDebt", "debt"]
+            for field in debt_fields:
+                if field in info and info[field] is not None:
+                    debt_val = info[field]
+                    if isinstance(debt_val, (int, float)) and debt_val >= 0:
+                        debt = float(debt_val)
+                        break
+            
+            # Build data dictionary
+            data = {
+                "price": price,
+                "shares": shares / 1e6,  # Convert to millions
+                "cash": cash / 1e6 if cash > 0 else 0,
+                "ebit": (ebitda * 0.85) / 1e6 if ebitda > 0 else 0,
+                "debt": debt / 1e6 if debt > 0 else 0,
+            }
+            
+            # Validate we have at least price and shares
+            if data["price"] > 0 and data["shares"] > 0:
+                # Handle currency conversion
+                if target_curr.upper() != native_curr.upper():
+                    try:
+                        rate_ticker = yf.Ticker(f"{native_curr}{target_curr}=X")
+                        time.sleep(0.1)  # Small delay
+                        rate_history = rate_ticker.history(period="1d")
+                        if not rate_history.empty and len(rate_history) > 0:
+                            rate = rate_history['Close'].iloc[-1]
+                            if rate and rate > 0:
+                                for k in ["price", "cash", "ebit", "debt"]: 
+                                    data[k] *= rate
+                    except Exception as conv_error:
+                        # If currency conversion fails, continue with native currency
+                        pass
+                
+                return data
+            else:
+                # Last resort: try to get price from history if info failed
+                if data["price"] <= 0:
+                    try:
+                        hist = tk.history(period="5d")
+                        if not hist.empty and len(hist) > 0:
+                            price_from_hist = float(hist['Close'].iloc[-1])
+                            if price_from_hist > 0:
+                                data["price"] = price_from_hist
+                                # If we now have price and shares, return
+                                if data["shares"] > 0:
+                                    return data
+                    except:
+                        pass
+                continue
+                
         except Exception as e:
-            # Try next variant
+            last_error = str(e)
+            # Continue to next variant
             continue
     
     # If all variants failed, return None
@@ -735,14 +910,28 @@ with st.sidebar:
     
     if st.button("Fetch & Auto-fill"):
         with st.spinner(f"Fetching data for {t_input}..."):
-            res = fetch_data(t_input, target_currency)
-        if res: 
-            st.session_state.st_vals.update(res)
-            st.success(f"✅ Data fetched for {t_input}! Values updated.")
-            st.rerun()
-        else:
-            st.error(f"❌ Failed to fetch data for {t_input}.")
-            st.info(f"💡 Tip: Some tickers need exchange suffixes. Try: {t_input}.CO (Copenhagen), {t_input}.TO (Toronto), {t_input}.L (London), etc.")
+            try:
+                res = fetch_data(t_input, target_currency)
+                if res: 
+                    st.session_state.st_vals.update(res)
+                    st.success(f"✅ Data fetched for {t_input}! Values updated.")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Failed to fetch data for {t_input}.")
+                    st.info(f"💡 Tip: Some tickers need exchange suffixes. Try: {t_input}.CO (Copenhagen), {t_input}.TO (Toronto), {t_input}.L (London), etc.")
+                    # Try to show what went wrong
+                    try:
+                        test_ticker = yf.Ticker(t_input)
+                        test_info = test_ticker.info
+                        if test_info:
+                            st.warning(f"⚠️ Ticker {t_input} exists but missing required data fields.")
+                        else:
+                            st.warning(f"⚠️ Ticker {t_input} not found. Try with exchange suffix.")
+                    except:
+                        pass
+            except Exception as e:
+                st.error(f"❌ Error fetching data: {str(e)}")
+                st.info(f"💡 Tip: Try with exchange suffix (e.g., {t_input}.CO, {t_input}.TO, {t_input}.L)")
 
 with st.sidebar.form("input_form"):
     st.header("Company Information")
