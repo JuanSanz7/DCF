@@ -891,7 +891,7 @@ def create_dual_input(label, min_val, max_val, value, step, key_prefix, help_tex
     # Slider for dragging - syncs with text input (stacked below text input)
     # Using minimal label to save space
     slider_value = st.slider(
-        " ",  # Minimal space label (takes minimal vertical space)
+        "•",  # Minimal bullet label (takes minimal space)
         min_value=min_val,
         max_value=max_val,
         value=current_val,
@@ -1025,30 +1025,26 @@ with st.sidebar.form("input_form"):
     if missing_fields:
         st.warning(f"⚠️ The following fields are 0 (not retrieved by autofetch): {', '.join(missing_fields)}. Please enter them manually.")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        # Dynamically adjust max based on current value to accommodate fetched data
-        price_val = float(st.session_state.st_vals.get('price', 0.0))
-        shares_val = float(st.session_state.st_vals.get('shares', 0.0))
-        cash_val = float(st.session_state.st_vals.get('cash', 0.0))
-        
-        price_max = max(10000.0, price_val * 2) if price_val > 0 else 10000.0
-        shares_max = max(100000.0, shares_val * 2) if shares_val > 0 else 100000.0
-        cash_max = max(1000000.0, cash_val * 2) if cash_val > 0 else 1000000.0
-        
-        current_price = create_dual_input("Current Price", 0.0, price_max, price_val, 0.1, "price", "Enter stock price (type or use slider)")
-        shares_outstanding = create_dual_input("Shares Outstanding (millions)", 0.0, shares_max, shares_val, 1.0, "shares", "Enter shares outstanding in millions (type or use slider)")
-        cash = create_dual_input("Cash (millions)", 0.0, cash_max, cash_val, 100.0, "cash", "Enter cash in millions (type or use slider)")
-    with col2:
-        ebit_val = float(st.session_state.st_vals.get('ebit', 0.0))
-        debt_val = float(st.session_state.st_vals.get('debt', 0.0))
-        
-        ebit_max = max(1000000.0, ebit_val * 2) if ebit_val > 0 else 1000000.0
-        debt_max = max(1000000.0, debt_val * 2) if debt_val > 0 else 1000000.0
-        
-        operating_income_base = create_dual_input("Operating Income Base (millions)", 0.0, ebit_max, ebit_val, 100.0, "ebit", "Enter operating income in millions (type or use slider)")
-        debt = create_dual_input("Debt (millions)", 0.0, debt_max, debt_val, 100.0, "debt", "Enter debt in millions (type or use slider)")
-        tax_rate = create_dual_input("Tax Rate (%)", 0.0, 50.0, 21.0, 0.1, "tax_rate", "Enter tax rate as percentage (type or use slider)")
+    # Stack inputs vertically (columns not allowed in sidebar forms)
+    # Dynamically adjust max based on current value to accommodate fetched data
+    price_val = float(st.session_state.st_vals.get('price', 0.0))
+    shares_val = float(st.session_state.st_vals.get('shares', 0.0))
+    cash_val = float(st.session_state.st_vals.get('cash', 0.0))
+    ebit_val = float(st.session_state.st_vals.get('ebit', 0.0))
+    debt_val = float(st.session_state.st_vals.get('debt', 0.0))
+    
+    price_max = max(10000.0, price_val * 2) if price_val > 0 else 10000.0
+    shares_max = max(100000.0, shares_val * 2) if shares_val > 0 else 100000.0
+    cash_max = max(1000000.0, cash_val * 2) if cash_val > 0 else 1000000.0
+    ebit_max = max(1000000.0, ebit_val * 2) if ebit_val > 0 else 1000000.0
+    debt_max = max(1000000.0, debt_val * 2) if debt_val > 0 else 1000000.0
+    
+    current_price = create_dual_input("Current Price", 0.0, price_max, price_val, 0.1, "price", "Enter stock price (type or use slider)")
+    shares_outstanding = create_dual_input("Shares Outstanding (millions)", 0.0, shares_max, shares_val, 1.0, "shares", "Enter shares outstanding in millions (type or use slider)")
+    cash = create_dual_input("Cash (millions)", 0.0, cash_max, cash_val, 100.0, "cash", "Enter cash in millions (type or use slider)")
+    operating_income_base = create_dual_input("Operating Income Base (millions)", 0.0, ebit_max, ebit_val, 100.0, "ebit", "Enter operating income in millions (type or use slider)")
+    debt = create_dual_input("Debt (millions)", 0.0, debt_max, debt_val, 100.0, "debt", "Enter debt in millions (type or use slider)")
+    tax_rate = create_dual_input("Tax Rate (%)", 0.0, 50.0, 21.0, 0.1, "tax_rate", "Enter tax rate as percentage (type or use slider)")
     
     # Calculate and display implied NOPAT
     nopat_implied = operating_income_base * (1 - tax_rate / 100)
@@ -1278,4 +1274,3 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
-
