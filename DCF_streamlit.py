@@ -60,19 +60,19 @@ def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribut
 def load_analysis(analysis_id):
     """Load a saved analysis"""
     analysis_dir = ANALYSES_DIR / analysis_id
-    if not analysis_dir. exists():
+    if not analysis_dir.exists():
         return None
     
     # Load valuation summary
     with open(analysis_dir / "valuation_summary.json", 'r') as f:
-        valuation_summary = json. load(f)
+        valuation_summary = json.load(f)
     
     # Load results plot
     results_plot_path = analysis_dir / "results_plot.png"
     
     return {
         'valuation_summary': valuation_summary,
-        'results_plot':  results_plot_path
+        'results_plot': results_plot_path
     }
 
 def delete_analysis(analysis_id):
@@ -98,7 +98,7 @@ def delete_analysis(analysis_id):
     
     # Clear selected analysis if it was the deleted one
     if st.session_state.get('selected_analysis') == analysis_id:
-        st.session_state.selected_analysis = None
+        st.session_state. selected_analysis = None
 
 def display_saved_analyses():
     """Display the saved analyses organized by ticker"""
@@ -106,7 +106,7 @@ def display_saved_analyses():
     
     index = load_analyses_index()
     
-    if not index: 
+    if not index:
         st.info("No analyses have been performed yet.  Run a simulation to save your first analysis.")
         return
     
@@ -115,8 +115,8 @@ def display_saved_analyses():
         st.session_state.selected_analysis = None
     
     # Check if an analysis was deleted
-    if 'delete_analysis_id' in st. session_state:
-        delete_analysis(st.session_state. delete_analysis_id)
+    if 'delete_analysis_id' in st.session_state:
+        delete_analysis(st.session_state.delete_analysis_id)
         del st.session_state.delete_analysis_id
         st.rerun()
     
@@ -144,8 +144,8 @@ def display_saved_analyses():
                     st.write(f"**Date:** {date_str} | **Time:** {formatted_time}")
                 with col2:
                     if st.button("View", key=f"view_{analysis_id}"):
-                        st. session_state.selected_analysis = analysis_id
-                        st. session_state.active_tab = "Performed Analyses"
+                        st.session_state.selected_analysis = analysis_id
+                        st.session_state.active_tab = "Performed Analyses"
                         # Set query param to persist tab selection
                         st.query_params.tab = "performed"
                         # Clear the radio button state to force it to use our index on rerun
@@ -217,9 +217,9 @@ def display_analysis(analysis_id):
             Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
             
             <p><strong>Terminal Value Params:</strong><br>
-            Term.  Growth:  {valuation_summary['Terminal Value Params']['Term.  Growth']}<br>
+            Term. Growth:  {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
             Term.  WACC: {valuation_summary['Terminal Value Params']['Term.  WACC']}<br>
-            Term.  Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
+            Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term.  Reinv Rate']}</p>
             </div>
         """, unsafe_allow_html=True)
 
@@ -230,17 +230,18 @@ def fetch_data(ticker, target_curr):
         info = tk.info
         native_curr = info.get("currency", "USD")
         data = {
-            "price": info.get("currentPrice", 168. 4),
+            "price": info.get("currentPrice", 168.4),
             "shares":  info.get("sharesOutstanding", 12700e6) / 1e6,
             "cash": info.get("totalCash", 96000e6) / 1e6,
             "ebit": info.get("ebitda", 154740e6) * 0.85 / 1e6,
             "debt": info.get("totalDebt", 22000e6) / 1e6,
         }
         if target_curr != native_curr: 
-            rate = yf.Ticker(f"{native_curr}{target_curr}=X").history(period="1d")['Close'].iloc[-1]
-            for k in ["price", "cash", "ebit", "debt"]:  data[k] *= rate
+            rate = yf. Ticker(f"{native_curr}{target_curr}=X").history(period="1d")['Close'].iloc[-1]
+            for k in ["price", "cash", "ebit", "debt"]:
+                data[k] *= rate
         return data
-    except:  
+    except: 
         return None
 
 if 'st_vals' not in st.session_state:
@@ -253,7 +254,7 @@ if 'active_tab' not in st.session_state:
 # Helper:  dual slider + number input with two-way sync
 def _make_dual_input(key, label, default, min_value, max_value, step, fmt="{:.2f}", integer=False):
     """
-    Create a slider and a numeric input side-by-side that stay in sync.
+    Create a slider and a numeric input side-by-side that stay in sync. 
     Returns the current value (float or int depending on `integer`).
     Keys used in session_state:  f"{key}_slider" and f"{key}_input"
     """
@@ -316,7 +317,7 @@ def _make_dual_input(key, label, default, min_value, max_value, step, fmt="{:.2f
     return int(st.session_state[slider_key]) if integer else float(st.session_state[slider_key])
 
 with st.sidebar:
-    st. header("1. Automatic Search")
+    st.header("1. Automatic Search")
     t_input = st.text_input("Ticker", value="GOOGL").upper()
     target_currency = st.text_input("Target Currency", value="USD").upper()
     if st.button("Fetch & Auto-fill"):
@@ -324,13 +325,13 @@ with st.sidebar:
             res = fetch_data(t_input, target_currency)
         if res:
             # update general store
-            st.session_state.st_vals. update(res)
+            st.session_state. st_vals. update(res)
 
             # Map fetched fields to widget keys used by _make_dual_input and update them
             mapping = {
                 "current_price": res. get("price"),
                 "shares_outstanding": res.get("shares"),
-                "cash": res. get("cash"),
+                "cash": res.get("cash"),
                 "operating_income_base": res.get("ebit"),
                 "debt": res.get("debt"),
             }
@@ -349,7 +350,7 @@ with st.sidebar:
             # rerun so form widgets pick up the new session_state values
             st.rerun()
         else:
-            st.error("Could not fetch data. Check ticker, currency and internet connection.")
+            st.error("Could not fetch data.  Check ticker, currency and internet connection.")
 
 with st.sidebar. form("input_form"):
     st.header("Company Information")
@@ -359,10 +360,10 @@ with st.sidebar. form("input_form"):
     st.header("Financial Information")
 
     # determine sensible maxima based on fetched/default values
-    current_price_default = st.session_state. st_vals.get('price', 168.4)
+    current_price_default = st.session_state.st_vals.get('price', 168.4)
     shares_default = st.session_state.st_vals.get('shares', 12700.0)
     cash_default = st.session_state.st_vals.get('cash', 96000.0)
-    ebit_default = st. session_state.st_vals. get('ebit', 154740.0)
+    ebit_default = st.session_state. st_vals.get('ebit', 154740.0)
     debt_default = st.session_state.st_vals.get('debt', 22000.0)
 
     # Current price, shares, cash, operating income, debt, tax rate
@@ -491,7 +492,7 @@ with st.sidebar. form("input_form"):
         min_value=0.0,
         max_value=100.0,
         step=0.1,
-        fmt="%.1f"
+        fmt="%. 1f"
     )
     reinvestment_rate_5_10y = _make_dual_input(
         key="reinvestment_rate_5_10y",
@@ -504,7 +505,7 @@ with st.sidebar. form("input_form"):
     )
 
     # Standard Deviations
-    st. header("Standard Deviations")
+    st.header("Standard Deviations")
     std_growth_5y = _make_dual_input(
         key="std_growth_5y",
         label="Std Growth 5y (%)",
@@ -548,7 +549,7 @@ with st.sidebar. form("input_form"):
         min_value=0.0,
         max_value=10.0,
         step=0.01,
-        fmt="%.2f"
+        fmt="%. 2f"
     )
     std_reinv_5y = _make_dual_input(
         key="std_reinv_5y",
@@ -599,7 +600,7 @@ if submitted and not viewing_analysis:
         'reinvestment_rate_5_10y': float(reinvestment_rate_5_10y)/100,
         'std_growth_5y': float(std_growth_5y)/100, 'std_growth_5_10y': float(std_growth_5_10y)/100,
         'std_risk_free': float(std_risk_free)/100, 'std_equity_premium': float(std_equity_premium)/100,
-        'std_WACC': float(std_WACC)/100, 'std_reinv_5y': float(std_reinv_5y)/100,
+        'std_WACC':  float(std_WACC)/100, 'std_reinv_5y': float(std_reinv_5y)/100,
         'std_reinv_5_10y': float(std_reinv_5_10y)/100, 'n_simulations': int(n_simulations)
     }
 
@@ -678,29 +679,29 @@ if submitted and not viewing_analysis:
                         Overvaluation: {valuation_summary['prob_overvalued']}<br>
                         Undervaluation: {valuation_summary['prob_undervalued']}</p>
                         
-                        <p><strong>Risk Metrics: </strong><br>
+                        <p><strong>Risk Metrics:</strong><br>
                         VaR 95%: {valuation_summary['VaR 95%']}<br>
                         CVaR 95%:  {valuation_summary['CVaR 95%']}<br>
-                        Std.  Deviation: {valuation_summary['Std. Deviation']}</p>
+                        Std. Deviation: {valuation_summary['Std. Deviation']}</p>
                         </div>
                     """, unsafe_allow_html=True)
                 
                 with sum_col2:
                     st.markdown(f"""
                         <div class="summary-text">
-                        <p><strong>Variable Parameters: </strong><br>
-                        Growth 5y: {valuation_summary['Variable Parameters']['Growth 5y']}<br>
+                        <p><strong>Variable Parameters:</strong><br>
+                        Growth 5y:  {valuation_summary['Variable Parameters']['Growth 5y']}<br>
                         Growth 5-10y: {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>
                         WACC: {valuation_summary['Variable Parameters']['WACC']}<br>
                         Risk Premium: {valuation_summary['Variable Parameters']['Risk Premium']}<br>
                         Risk Free Rate: {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>
-                        Reinvestment 5y:  {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
+                        Reinvestment 5y: {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
                         Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
                         
                         <p><strong>Terminal Value Params:</strong><br>
-                        Term.  Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
-                        Term. WACC: {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
-                        Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term.  Reinv Rate']}</p>
+                        Term. Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
+                        Term. WACC:  {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
+                        Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
                         </div>
                     """, unsafe_allow_html=True)
 
