@@ -1,6 +1,6 @@
 # IMPORTANT: st.set_page_config must be the first Streamlit command
 import streamlit as st
-st.set_page_config(page_title="DCF Monte Carlo Valuation Tool", layout="wide")
+st.set_page_config(page_title="Intrinsic Valuation Tool. DCF Monte Carlo Simulation", layout="wide")
 
 st.markdown(
     """
@@ -623,7 +623,7 @@ def display_analysis(analysis_id):
             </div>
         """, unsafe_allow_html=True)
 
-st.title("DCF Monte Carlo Valuation Tool")
+st.title("Intrinsic Valuation Tool. DCF Monte Carlo Simulation")
 
 # --- USER IDENTIFICATION (MUST BE SET FIRST) ---
 st.markdown("---")
@@ -1691,6 +1691,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
