@@ -862,50 +862,35 @@ with st.sidebar:
     st.header("1. Automatic Search")
     
     # Initialize ticker search state
-    if 'ticker_search_query' not in st.session_state:
-        st.session_state.ticker_search_query = "GOOGL"
-    if 'ticker_suggestions' not in st.session_state:
-        st.session_state.ticker_suggestions = []
     if 'selected_ticker' not in st.session_state:
-        st.session_state.selected_ticker = "GOOGL"
+        st.session_state.selected_ticker = "GOOGL - Alphabet Inc. (Class A)"
     
-    # Ticker search input with autocomplete
-    search_query = st.text_input(
-        "Search Ticker (type to see suggestions)", 
-        value=st.session_state.ticker_search_query,
-        key="ticker_search",
-        help="Start typing a ticker symbol or company name to see suggestions"
-    ).upper()
+    # Get all tickers from database
+    ticker_db = get_ticker_database()
+    all_ticker_options = [f"{ticker} - {name}" for ticker, name in sorted(ticker_db.items())]
     
-    # Update suggestions as user types
-    if search_query and len(search_query) >= 1:
-        suggestions = search_tickers(search_query)
-        st.session_state.ticker_suggestions = suggestions
-        
-        if suggestions:
-            # Create a list of display strings for the selectbox
-            suggestion_options = [f"{s['ticker']} - {s['name']}" for s in suggestions]
-            suggestion_options.insert(0, f"{search_query} (use as-is)")
-            
-            selected_option = st.selectbox(
-                "Select from suggestions or use your input:",
-                options=suggestion_options,
-                key="ticker_select",
-                help="Choose a ticker from the suggestions or use your typed input"
-            )
-            
-            # Extract ticker from selection
-            if selected_option and selected_option != f"{search_query} (use as-is)":
-                t_input = selected_option.split(" - ")[0]
-            else:
-                t_input = search_query
-        else:
-            t_input = search_query
-            st.info(f"No suggestions found. Using '{search_query}' as ticker.")
-    else:
-        t_input = search_query if search_query else "GOOGL"
+    # Find current selection index
+    current_selection = st.session_state.get('selected_ticker', "GOOGL - Alphabet Inc. (Class A)")
+    try:
+        default_index = all_ticker_options.index(current_selection)
+    except ValueError:
+        default_index = 0
+        # Add current selection if not in database
+        all_ticker_options.insert(0, current_selection)
     
-    st.session_state.ticker_search_query = t_input
+    # Single searchable selectbox - Streamlit's selectbox has built-in search/filter
+    # As you type, it filters the options and shows suggestions in a dropdown
+    selected_option = st.selectbox(
+        "Search Ticker (type to see suggestions)",
+        options=all_ticker_options,
+        index=default_index,
+        key="ticker_selectbox",
+        help="Start typing to search. Suggestions will appear in the dropdown as you type."
+    )
+    
+    # Extract ticker from selection
+    t_input = selected_option.split(" - ")[0].strip()
+    st.session_state.selected_ticker = selected_option
     
     target_currency = st.text_input("Target Currency", value="USD").upper()
     
@@ -1223,5 +1208,6 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
