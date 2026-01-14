@@ -14,6 +14,81 @@ from pathlib import Path
 from DCF_main import run_monte_carlo_simulation
 st.title("DCF Monte Carlo Valuation Tool")
 
+# --- USER IDENTIFICATION (MUST BE SET FIRST) ---
+st.markdown("---")
+st.subheader("👤 User Identification")
+
+# Initialize user state
+if 'user_initialized' not in st.session_state:
+    st.session_state.user_initialized = False
+
+# Get existing user names
+existing_users = get_user_name_from_index()
+
+# User name input
+if not st.session_state.user_initialized:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        user_input = st.text_input(
+            "Enter your name/identifier:",
+            key="user_name_input",
+            help="Enter a unique name to identify your analyses. This name will be used to save and retrieve your analyses.",
+            placeholder="e.g., John, Analyst_1, or your email"
+        )
+    with col2:
+        st.write("")  # Spacing
+        st.write("")  # Spacing
+        submit_user = st.button("Set Name", key="submit_user_name", type="primary")
+    
+    if submit_user and user_input:
+        user_input = user_input.strip()
+        if not user_input:
+            st.error("Please enter a valid name.")
+        elif is_user_name_taken(user_input):
+            st.warning(f"⚠️ The name '{user_input}' is already in use by another user.")
+            st.info("💡 If this is your name, you can continue. Your existing analyses will be loaded.")
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("Continue Anyway", key="continue_existing_user"):
+                    if set_user_name(user_input):
+                        existing_count = count_user_analyses(user_input)
+                        if existing_count > 0:
+                            st.success(f"✅ Welcome back, {user_input}! Found {existing_count} existing analyses.")
+                        else:
+                            st.success(f"✅ Name set to: {user_input}")
+                        st.rerun()
+            with col2:
+                if st.button("Choose Different Name", key="choose_different"):
+                    st.rerun()
+        else:
+            if set_user_name(user_input):
+                st.success(f"✅ Name set to: {user_input}")
+                st.rerun()
+    elif submit_user:
+        st.error("Please enter a name before continuing.")
+else:
+    # User is already set, show current user info
+    current_user = get_user_name()
+    user_analyses_count = count_user_analyses(current_user)
+    
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.info(f"👤 **Current User:** {current_user}" + (f" ({user_analyses_count} analyses)" if user_analyses_count > 0 else ""))
+    with col2:
+        if st.button("Change User", key="change_user_btn"):
+            st.session_state.user_initialized = False
+            st.session_state.user_name = None
+            st.session_state.user_id = None
+            st.rerun()
+    with col3:
+        if st.button("Logout", key="logout_btn"):
+            st.session_state.user_initialized = False
+            st.session_state.user_name = None
+            st.session_state.user_id = None
+            st.rerun()
+
+st.markdown("---")
+
 # --- ANALYSIS STORAGE FUNCTIONS ---
 # Use absolute path for better persistence
 BASE_DIR = Path(__file__).parent.absolute()
@@ -21,29 +96,56 @@ ANALYSES_DIR = BASE_DIR / "saved_analyses"
 ANALYSES_DIR.mkdir(exist_ok=True)
 ANALYSES_INDEX_FILE = ANALYSES_DIR / "analyses_index.json"
 
-def get_user_id():
-    """Get or create a user ID for the current session"""
-    if 'user_id' not in st.session_state:
-        # Generate a unique user ID based on session ID
-        import hashlib
-        session_id = st.session_state.get('_session_id', str(id(st.session_state)))
-        user_id = hashlib.md5(session_id.encode()).hexdigest()[:8]
-        st.session_state.user_id = user_id
-        st.session_state.user_name = f"User_{user_id}"
-    return st.session_state.user_id
+def get_user_name_from_index():
+    """Get all unique user names from the index"""
+    index = load_analyses_index()
+    user_names = set()
+    for ticker, analyses in index.items():
+        for analysis_id, analysis_info in analyses.items():
+            user_name = analysis_info.get('user_name')
+            if user_name:
+                user_names.add(user_name)
+    return sorted(list(user_names))
+
+def get_user_id_from_name(user_name):
+    """Get or create a user ID for a given user name"""
+    import hashlib
+    # Create a consistent user_id from user_name (deterministic hash)
+    user_id = hashlib.md5(user_name.encode()).hexdigest()[:12]
+    return user_id
+
+def is_user_name_taken(user_name):
+    """Check if a user name already exists in the analyses"""
+    if not user_name or not user_name.strip():
+        return False
+    existing_names = get_user_name_from_index()
+    return user_name.strip() in existing_names
 
 def get_user_name():
-    """Get the user's display name"""
-    if 'user_name' not in st.session_state:
-        get_user_id()  # This will set user_name
-    return st.session_state.get('user_name', f"User_{get_user_id()}")
+    """Get the current user's name (must be set before use)"""
+    return st.session_state.get('user_name', None)
+
+def get_user_id():
+    """Get the current user's ID (derived from name)"""
+    user_name = get_user_name()
+    if not user_name:
+        return None
+    return get_user_id_from_name(user_name)
 
 def set_user_name(name):
-    """Set a custom user name"""
-    if name and name.strip():
-        st.session_state.user_name = name.strip()
-        return True
-    return False
+    """Set the user name and load their existing analyses"""
+    if not name or not name.strip():
+        return False
+    
+    name = name.strip()
+    user_id = get_user_id_from_name(name)
+    
+    # Store user info
+    st.session_state.user_name = name
+    st.session_state.user_id = user_id
+    st.session_state.user_initialized = True
+    
+    return True
 
 def load_analyses_index():
     """Load the index of all saved analyses"""
@@ -56,24 +158,34 @@ def load_analyses_index():
             return {}
     return {}
 
-def get_user_analyses_index(user_id=None):
-    """Get analyses index filtered for a specific user"""
-    if user_id is None:
-        user_id = get_user_id()
+def get_user_analyses_index(user_name=None):
+    """Get analyses index filtered for a specific user by name"""
+    if user_name is None:
+        user_name = get_user_name()
+        if not user_name:
+            return {}
     
     all_index = load_analyses_index()
     user_index = {}
     
-    # Filter by user_id
+    # Filter by user_name
     for ticker, analyses in all_index.items():
         user_analyses = {}
         for analysis_id, analysis_info in analyses.items():
-            if analysis_info.get('user_id') == user_id:
+            if analysis_info.get('user_name') == user_name:
                 user_analyses[analysis_id] = analysis_info
         if user_analyses:
             user_index[ticker] = user_analyses
     
     return user_index
+
+def count_user_analyses(user_name):
+    """Count how many analyses a user has"""
+    user_index = get_user_analyses_index(user_name)
+    count = 0
+    for ticker, analyses in user_index.items():
+        count += len(analyses)
+    return count
 
 def save_analyses_index(index):
     """Save the index of all analyses with error handling"""
@@ -109,10 +221,12 @@ def validate_analysis_files(analysis_id):
     
     return all(f.exists() for f in required_files)
 
-def cleanup_orphaned_analyses(user_id=None):
+def cleanup_orphaned_analyses(user_name=None):
     """Remove entries from index where files no longer exist (for current user only)"""
-    if user_id is None:
-        user_id = get_user_id()
+    if user_name is None:
+        user_name = get_user_name()
+        if not user_name:
+            return False
     
     index = load_analyses_index()
     cleaned = False
@@ -121,7 +235,7 @@ def cleanup_orphaned_analyses(user_id=None):
         for analysis_id in list(index[ticker].keys()):
             analysis_info = index[ticker][analysis_id]
             # Only clean up analyses belonging to this user
-            if analysis_info.get('user_id') == user_id:
+            if analysis_info.get('user_name') == user_name:
                 if not validate_analysis_files(analysis_id):
                     # File doesn't exist, remove from index
                     del index[ticker][analysis_id]
@@ -160,8 +274,11 @@ def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribut
             raise IOError("Failed to save analysis files")
         
         # Update index with user information
-        user_id = get_user_id()
         user_name = get_user_name()
+        if not user_name:
+            raise ValueError("User name must be set before saving analyses")
+        
+        user_id = get_user_id()
         index = load_analyses_index()
         if ticker not in index:
             index[ticker] = {}
@@ -220,15 +337,18 @@ def load_analysis(analysis_id):
 
 def delete_analysis(analysis_id):
     """Delete an analysis from disk and index (only if owned by current user)"""
-    user_id = get_user_id()
+    user_name = get_user_name()
+    if not user_name:
+        return
+    
     index = load_analyses_index()
     
     # Find and remove from index (only if owned by current user)
     for ticker in list(index.keys()):
         if analysis_id in index[ticker]:
             analysis_info = index[ticker][analysis_id]
-            # Verify ownership
-            if analysis_info.get('user_id') == user_id:
+            # Verify ownership by user_name
+            if analysis_info.get('user_name') == user_name:
                 del index[ticker][analysis_id]
                 # Remove ticker entry if no analyses left
                 if not index[ticker]:
@@ -249,31 +369,13 @@ def delete_analysis(analysis_id):
 
 def display_saved_analyses():
     """Display the saved analyses organized by ticker (for current user only)"""
-    st.header("Performed Analyses")
-    
-    # User identification section
-    user_id = get_user_id()
+    # Check if user is set
     user_name = get_user_name()
+    if not user_name or not st.session_state.get('user_initialized'):
+        st.warning("⚠️ Please set your user name at the top of the page to view your analyses.")
+        return
     
-    with st.expander("👤 User Settings", expanded=False):
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            new_name = st.text_input(
-                "Your Name/Identifier",
-                value=user_name,
-                key="user_name_input",
-                help="Set a name to identify your analyses. This helps separate your analyses from others using the tool."
-            )
-        with col2:
-            st.write("")  # Spacing
-            st.write("")  # Spacing
-            if st.button("Update Name", key="update_user_name"):
-                if set_user_name(new_name):
-                    st.success(f"Name updated to: {get_user_name()}")
-                    st.rerun()
-        
-        st.caption(f"**User ID:** `{user_id}` (auto-generated, unique to your session)")
-        st.info("💡 Each user has their own separate analyses. Your analyses are only visible to you.")
+    st.header("Performed Analyses")
     
     # Show storage info
     with st.expander("ℹ️ About Analysis Storage", expanded=False):
@@ -282,8 +384,9 @@ def display_saved_analyses():
         
         **User Isolation:**
         - Each user has their own separate analyses section
-        - Analyses are tagged with your user ID
+        - Analyses are tagged with your user name: **{user_name}**
         - You can only see and manage your own analyses
+        - If another user uses the same name, you'll see a warning
         
         **Persistence:**
         - **Local deployment:** Analyses persist across app restarts
@@ -293,7 +396,7 @@ def display_saved_analyses():
         **What's Saved:**
         - Results plot (PNG image)
         - Valuation summary (JSON with all parameters and results)
-        - Analysis metadata (timestamp, company name, user info, etc.)
+        - Analysis metadata (timestamp, company name, user name, etc.)
         """)
     
     # Clean up orphaned entries (analyses in index but files missing) for current user
@@ -304,11 +407,12 @@ def display_saved_analyses():
     
     if not index:
         st.info(f"No analyses have been performed yet. Run a simulation to save your first analysis.")
-        st.caption(f"Currently logged in as: **{get_user_name()}**")
+        st.caption(f"Currently logged in as: **{user_name}**")
         return
     
     # Show current user indicator
-    st.caption(f"👤 Showing analyses for: **{get_user_name()}**")
+    user_analyses_count = count_user_analyses(user_name)
+    st.caption(f"👤 Showing analyses for: **{user_name}** ({user_analyses_count} analyses)")
     
     # Initialize session state for selected analysis
     if 'selected_analysis' not in st.session_state:
@@ -1127,6 +1231,12 @@ with st.sidebar:
                 st.info(f"💡 Tip: Try with exchange suffix (e.g., {t_input}.CO, {t_input}.TO, {t_input}.L)")
 
 with st.sidebar.form("input_form"):
+    # Check if user is set
+    if not st.session_state.get('user_initialized') or not get_user_name():
+        st.error("⚠️ **Please set your user name at the top of the page before filling out this form.**")
+        st.info("Your analyses will be saved under your name, and you'll be able to access them later.")
+        st.stop()
+    
     st.header("Company Information")
     company_name = st.text_input("Company Name", value=t_input)
     # Currency se usa desde target_currency de arriba
@@ -1222,6 +1332,11 @@ with st.sidebar.form("input_form"):
 viewing_analysis = st.session_state.get('selected_analysis') and not submitted
 
 if submitted and not viewing_analysis:
+    # Check if user name is set
+    if not st.session_state.get('user_initialized') or not get_user_name():
+        st.error("❌ Please set your user name at the top of the page before running a simulation.")
+        st.stop()
+    
     params = {
         'company_name': company_name, 'currency': target_currency,
         'current_price': current_price, 'shares_outstanding': shares_outstanding,
