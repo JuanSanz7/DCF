@@ -890,12 +890,13 @@ def create_dual_input(label, min_val, max_val, value, step, key_prefix, help_tex
     
     # Slider for dragging - syncs with text input (stacked below text input)
     slider_value = st.slider(
-        "",  # Empty label - slider is self-explanatory
+        " ",  # Space as label (required by Streamlit, but hidden)
         min_value=min_val,
         max_value=max_val,
         value=current_val,
         step=step,
         key=f"{key_prefix}_slider",
+        label_visibility="hidden",  # Hide the label
         help="Drag to adjust the value in the text box above"
     )
     
