@@ -1,9 +1,3 @@
-import streamlit as st
-import matplotlib.pyplot as plt
-import io
-import yfinance as yf
-import json
-import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -225,22 +219,88 @@ def display_analysis(analysis_id):
 
 # --- LÓGICA DE RECUPERACIÓN ---
 def fetch_data(ticker, target_curr):
-    try:
-        tk = yf.Ticker(ticker)
-        info = tk.info
-        native_curr = info.get("currency", "USD")
-        data = {
-            "price": info.get("currentPrice", 168.4),
-            "shares": info.get("sharesOutstanding", 12700e6) / 1e6,
-            "cash": info.get("totalCash", 96000e6) / 1e6,
-            "ebit": info.get("ebitda", 154740e6) * 0.85 / 1e6,
-            "debt": info.get("totalDebt", 22000e6) / 1e6,
-        }
-        if target_curr != native_curr:
-            rate = yf.Ticker(f"{native_curr}{target_curr}=X").history(period="1d")['Close'].iloc[-1]
-            for k in ["price", "cash", "ebit", "debt"]: data[k] *= rate
-        return data
-    except: return None
+    # Try different ticker formats (some stocks need exchange suffixes)
+    ticker_variants = [ticker]
+    
+    # Common exchange suffixes to try (only if ticker doesn't already have an exchange suffix)
+    if "." not in ticker and len(ticker) <= 5:  # Only try variants for short tickers without exchange
+        ticker_variants.extend([
+            f"{ticker}.CO",  # Copenhagen (e.g., NVO.CO for Novo Nordisk)
+            f"{ticker}.TO",  # Toronto
+            f"{ticker}.L",   # London
+            f"{ticker}.ST",  # Stockholm
+            f"{ticker}.DE",  # Germany
+            f"{ticker}.PA",  # Paris
+            f"{ticker}.AS",  # Amsterdam
+        ])
+    
+    for ticker_to_try in ticker_variants:
+        try:
+            tk = yf.Ticker(ticker_to_try)
+            info = tk.info
+            
+            # Check if info is valid and has data
+            if not info or len(info) == 0:
+                continue
+            
+            # Check for required fields - try multiple price fields
+            price = (info.get("currentPrice") or 
+                    info.get("regularMarketPrice") or 
+                    info.get("previousClose") or 
+                    info.get("open") or
+                    info.get("regularMarketPreviousClose"))
+            
+            if price is None or price == 0:
+                continue
+            
+            native_curr = info.get("currency", "USD")
+            
+            # Get shares outstanding, try multiple field names
+            shares = (info.get("sharesOutstanding") or 
+                     info.get("impliedSharesOutstanding") or
+                     info.get("sharesShort"))
+            
+            if shares is None or shares == 0:
+                # Try to get from market cap and price
+                market_cap = info.get("marketCap") or info.get("enterpriseValue")
+                if market_cap and price:
+                    shares = market_cap / price
+                else:
+                    continue
+            
+            # Get financial data with fallbacks
+            cash = info.get("totalCash") or info.get("totalCashPerShare", 0) * shares if info.get("totalCashPerShare") else 0
+            ebitda = info.get("ebitda") or info.get("operatingIncome") or 0
+            debt = info.get("totalDebt") or info.get("totalDebt") or 0
+            
+            data = {
+                "price": float(price),
+                "shares": float(shares) / 1e6,
+                "cash": float(cash) / 1e6,
+                "ebit": float(ebitda) * 0.85 / 1e6 if ebitda else 0,
+                "debt": float(debt) / 1e6,
+            }
+            
+            # Handle currency conversion
+            if target_curr != native_curr:
+                try:
+                    rate_ticker = yf.Ticker(f"{native_curr}{target_curr}=X")
+                    rate_history = rate_ticker.history(period="1d")
+                    if not rate_history.empty:
+                        rate = rate_history['Close'].iloc[-1]
+                        for k in ["price", "cash", "ebit", "debt"]: 
+                            data[k] *= rate
+                except:
+                    # If currency conversion fails, continue with native currency
+                    pass
+            
+            return data
+        except Exception as e:
+            # Try next variant
+            continue
+    
+    # If all variants failed, return None
+    return None
 
 if 'st_vals' not in st.session_state:
     st.session_state.st_vals = {"price": 168.4, "shares": 12700.0, "cash": 96000.0, "ebit": 154740.0, "debt": 22000.0}
@@ -254,13 +314,15 @@ with st.sidebar:
     t_input = st.text_input("Ticker", value="GOOGL").upper()
     target_currency = st.text_input("Target Currency", value="USD").upper()
     if st.button("Fetch & Auto-fill"):
-        res = fetch_data(t_input, target_currency)
+        with st.spinner(f"Fetching data for {t_input}..."):
+            res = fetch_data(t_input, target_currency)
         if res: 
             st.session_state.st_vals.update(res)
-            st.success(f"Data fetched for {t_input}! Values updated.")
+            st.success(f"✅ Data fetched for {t_input}! Values updated.")
             st.rerun()
         else:
-            st.error(f"Failed to fetch data for {t_input}. Please check the ticker symbol.")
+            st.error(f"❌ Failed to fetch data for {t_input}.")
+            st.info(f"💡 Tip: Some tickers need exchange suffixes. Try: {t_input}.CO (Copenhagen), {t_input}.TO (Toronto), {t_input}.L (London), etc.")
 
 with st.sidebar.form("input_form"):
     st.header("Company Information")
