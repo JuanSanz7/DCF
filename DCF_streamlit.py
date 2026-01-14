@@ -249,79 +249,13 @@ if 'st_vals' not in st.session_state:
 if 'active_tab' not in st.session_state:
     st.session_state.active_tab = "New Analysis"
 
-# Helper: dual slider + number input with two-way sync
-def _make_dual_input(key, label, default, min_value, max_value, step, fmt="{:.2f}", integer=False):
-    """
-    Create a slider and a numeric input side-by-side that stay in sync.
-    Returns the current value (float or int depending on `integer`).
-    Keys used in session_state: f"{key}_slider" and f"{key}_input"
-    """
-    slider_key = f"{key}_slider"
-    input_key = f"{key}_input"
-
-    # Initialize state if not present
-    if slider_key not in st.session_state:
-        st.session_state[slider_key] = default
-    if input_key not in st.session_state:
-        st.session_state[input_key] = default
-
-    # Callbacks to keep both widgets in sync
-    def _sync_slider_to_input(k=key):
-        st.session_state[f"{k}_input"] = st.session_state[f"{k}_slider"]
-
-    def _sync_input_to_slider(k=key):
-        st.session_state[f"{k}_slider"] = st.session_state[f"{k}_input"]
-
-    col_a, col_b = st.columns([3, 1])
-    with col_a:
-        # Slider display
-        if integer:
-            st.session_state[slider_key] = st.slider(
-                label,
-                min_value=int(min_value),
-                max_value=int(max_value),
-                value=int(st.session_state[slider_key]),
-                step=int(step),
-                key=slider_key,
-                on_change=_sync_slider_to_input
-            )
-        else:
-            st.session_state[slider_key] = st.slider(
-                label,
-                min_value=float(min_value),
-                max_value=float(max_value),
-                value=float(st.session_state[slider_key]),
-                step=float(step),
-                format=fmt,
-                key=slider_key,
-                on_change=_sync_slider_to_input
-            )
-    with col_b:
-        # Numeric input display
-        if integer:
-            st.session_state[input_key] = st.number_input(
-                "", min_value=int(min_value), max_value=int(max_value),
-                value=int(st.session_state[input_key]), step=int(step),
-                key=input_key, on_change=_sync_input_to_slider, format="%d"
-            )
-        else:
-            st.session_state[input_key] = st.number_input(
-                "", min_value=float(min_value), max_value=float(max_value),
-                value=float(st.session_state[input_key]), step=float(step),
-                key=input_key, on_change=_sync_input_to_slider, format=fmt
-            )
-
-    # Return the unified value (use slider value as source of truth)
-    return int(st.session_state[slider_key]) if integer else float(st.session_state[slider_key])
-
 with st.sidebar:
     st.header("1. Automatic Search")
     t_input = st.text_input("Ticker", value="GOOGL").upper()
     target_currency = st.text_input("Target Currency", value="USD").upper()
     if st.button("Fetch & Auto-fill"):
         res = fetch_data(t_input, target_currency)
-        if res:
-            st.session_state.st_vals.update(res)
+        if res: st.session_state.st_vals.update(res)
 
 with st.sidebar.form("input_form"):
     st.header("Company Information")
@@ -329,230 +263,44 @@ with st.sidebar.form("input_form"):
     # Currency se usa desde target_currency de arriba
 
     st.header("Financial Information")
-
-    # determine sensible maxima based on fetched/default values
-    current_price_default = st.session_state.st_vals.get('price', 168.4)
-    shares_default = st.session_state.st_vals.get('shares', 12700.0)
-    cash_default = st.session_state.st_vals.get('cash', 96000.0)
-    ebit_default = st.session_state.st_vals.get('ebit', 154740.0)
-    debt_default = st.session_state.st_vals.get('debt', 22000.0)
-
-    # Current price, shares, cash, operating income, debt, tax rate
-    with st.container():
-        current_price = _make_dual_input(
-            key="current_price",
-            label="Current Price",
-            default=current_price_default,
-            min_value=0.0,
-            max_value=max(current_price_default * 5, 10.0),
-            step=0.1,
-            fmt="%.2f"
-        )
-
-        shares_outstanding = _make_dual_input(
-            key="shares_outstanding",
-            label="Shares Outstanding (millions)",
-            default=shares_default,
-            min_value=0.0,
-            max_value=max(shares_default * 5, 1.0),
-            step=1,
-            fmt="%.1f"
-        )
-
-        cash = _make_dual_input(
-            key="cash",
-            label="Cash (millions)",
-            default=cash_default,
-            min_value=0.0,
-            max_value=max(cash_default * 2, 10.0),
-            step=1,
-            fmt="%.1f"
-        )
-
-        operating_income_base = _make_dual_input(
-            key="operating_income_base",
-            label="Operating Income Base (millions)",
-            default=ebit_default,
-            min_value=0.0,
-            max_value=max(ebit_default * 3, 10.0),
-            step=1,
-            fmt="%.1f"
-        )
-
-        debt = _make_dual_input(
-            key="debt",
-            label="Debt (millions)",
-            default=debt_default,
-            min_value=0.0,
-            max_value=max(debt_default * 2, 10.0),
-            step=1,
-            fmt="%.1f"
-        )
-
-        tax_rate = _make_dual_input(
-            key="tax_rate",
-            label="Tax Rate (%)",
-            default=21.0,
-            min_value=0.0,
-            max_value=100.0,
-            step=0.1,
-            fmt="%.1f"
-        )
-
+    col1, col2 = st.columns(2)
+    with col1:
+        current_price = st.number_input("Current Price", value=st.session_state.st_vals['price'])
+        shares_outstanding = st.number_input("Shares Outstanding (millions)", value=st.session_state.st_vals['shares'])
+        cash = st.number_input("Cash (millions)", value=st.session_state.st_vals['cash'])
+    with col2:
+        operating_income_base = st.number_input("Operating Income Base (millions)", value=st.session_state.st_vals['ebit'])
+        debt = st.number_input("Debt (millions)", value=st.session_state.st_vals['debt'])
+        tax_rate = st.number_input("Tax Rate (%)", value=21.0) # NUEVO
+    
     # Calculate and display implied NOPAT
     nopat_implied = operating_income_base * (1 - tax_rate / 100)
     st.info(f"**Implied NOPAT:** {nopat_implied:.2f} millions {target_currency} (Operating Income × (1 - Tax Rate))")
 
-    # Growth Parameters
+    # TODOS LOS PARÁMETROS ORIGINALES
     st.header("Growth Parameters")
-    growth_rate_5y = _make_dual_input(
-        key="growth_rate_5y",
-        label="Growth Rate 5y (%)",
-        default=15.0,
-        min_value=-50.0,
-        max_value=200.0,
-        step=0.1,
-        fmt="%.1f"
-    )
-    growth_rate_5_10y = _make_dual_input(
-        key="growth_rate_5_10y",
-        label="Growth Rate 5-10y (%)",
-        default=8.0,
-        min_value=-50.0,
-        max_value=200.0,
-        step=0.1,
-        fmt="%.1f"
-    )
+    growth_rate_5y = st.number_input("Growth Rate 5y (%)", value=15.0)
+    growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", value=8.0)
 
-    # Risk Parameters
     st.header("Risk Parameters")
-    risk_free_rate = _make_dual_input(
-        key="risk_free_rate",
-        label="Risk Free Rate (%)",
-        default=4.5,
-        min_value=-5.0,
-        max_value=50.0,
-        step=0.1,
-        fmt="%.2f"
-    )
-    equity_risk_premium = _make_dual_input(
-        key="equity_risk_premium",
-        label="Equity Risk Premium (%)",
-        default=5.13,
-        min_value=0.0,
-        max_value=50.0,
-        step=0.1,
-        fmt="%.2f"
-    )
-    WACC = _make_dual_input(
-        key="WACC",
-        label="WACC (%)",
-        default=9.6,
-        min_value=0.0,
-        max_value=50.0,
-        step=0.1,
-        fmt="%.2f"
-    )
+    risk_free_rate = st.number_input("Risk Free Rate (%)", value=4.5)
+    equity_risk_premium = st.number_input("Equity Risk Premium (%)", value=5.13)
+    WACC = st.number_input("WACC (%)", value=9.6)
 
-    # Reinvestment Rates
     st.header("Reinvestment Rates")
-    reinvestment_rate_5y = _make_dual_input(
-        key="reinvestment_rate_5y",
-        label="Reinvestment Rate 5y (%)",
-        default=50.0,
-        min_value=0.0,
-        max_value=100.0,
-        step=0.1,
-        fmt="%.1f"
-    )
-    reinvestment_rate_5_10y = _make_dual_input(
-        key="reinvestment_rate_5_10y",
-        label="Reinvestment Rate 5-10y (%)",
-        default=50.0,
-        min_value=0.0,
-        max_value=100.0,
-        step=0.1,
-        fmt="%.1f"
-    )
+    reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", value=50.0)
+    reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", value=50.0)
 
-    # Standard Deviations
     st.header("Standard Deviations")
-    std_growth_5y = _make_dual_input(
-        key="std_growth_5y",
-        label="Std Growth 5y (%)",
-        default=2.0,
-        min_value=0.0,
-        max_value=50.0,
-        step=0.1,
-        fmt="%.2f"
-    )
-    std_growth_5_10y = _make_dual_input(
-        key="std_growth_5_10y",
-        label="Std Growth 5-10y (%)",
-        default=3.0,
-        min_value=0.0,
-        max_value=50.0,
-        step=0.1,
-        fmt="%.2f"
-    )
-    std_risk_free = _make_dual_input(
-        key="std_risk_free",
-        label="Std Risk Free (%)",
-        default=0.5,
-        min_value=0.0,
-        max_value=10.0,
-        step=0.01,
-        fmt="%.2f"
-    )
-    std_equity_premium = _make_dual_input(
-        key="std_equity_premium",
-        label="Std Equity Premium (%)",
-        default=0.5,
-        min_value=0.0,
-        max_value=10.0,
-        step=0.01,
-        fmt="%.2f"
-    )
-    std_WACC = _make_dual_input(
-        key="std_WACC",
-        label="Std WACC (%)",
-        default=0.5,
-        min_value=0.0,
-        max_value=10.0,
-        step=0.01,
-        fmt="%.2f"
-    )
-    std_reinv_5y = _make_dual_input(
-        key="std_reinv_5y",
-        label="Std Reinv 5y (%)",
-        default=2.5,
-        min_value=0.0,
-        max_value=50.0,
-        step=0.1,
-        fmt="%.2f"
-    )
-    std_reinv_5_10y = _make_dual_input(
-        key="std_reinv_5_10y",
-        label="Std Reinv 5-10y (%)",
-        default=5.0,
-        min_value=0.0,
-        max_value=50.0,
-        step=0.1,
-        fmt="%.2f"
-    )
+    std_growth_5y = st.number_input("Std Growth 5y (%)", value=2.0)
+    std_growth_5_10y = st.number_input("Std Growth 5-10y (%)", value=3.0)
+    std_risk_free = st.number_input("Std Risk Free (%)", value=0.5)
+    std_equity_premium = st.number_input("Std Equity Premium (%)", value=0.5)
+    std_WACC = st.number_input("Std WACC (%)", value=0.5)
+    std_reinv_5y = st.number_input("Std Reinv 5y (%)", value=2.5)
+    std_reinv_5_10y = st.number_input("Std Reinv 5-10y (%)", value=5.0)
 
-    # Simulations (integer)
-    n_simulations = _make_dual_input(
-        key="n_simulations",
-        label="Simulations",
-        default=10000,
-        min_value=100,
-        max_value=100000,
-        step=100,
-        fmt="%d",
-        integer=True
-    )
-
+    n_simulations = st.number_input("Simulations", value=10000)
     submitted = st.form_submit_button("Run Simulation")
 
 # If an analysis is selected for viewing, force to else block for proper tab handling
@@ -562,17 +310,17 @@ viewing_analysis = st.session_state.get('selected_analysis') and not submitted
 if submitted and not viewing_analysis:
     params = {
         'company_name': company_name, 'currency': target_currency,
-        'current_price': float(current_price), 'shares_outstanding': float(shares_outstanding),
-        'cash': float(cash), 'debt': float(debt), 'operating_income_base': float(operating_income_base),
-        'tax_rate': float(tax_rate)/100,
-        'growth_rate_5y': float(growth_rate_5y)/100, 'growth_rate_5_10y': float(growth_rate_5_10y)/100,
-        'risk_free_rate': float(risk_free_rate)/100, 'equity_risk_premium': float(equity_risk_premium)/100,
-        'WACC': float(WACC)/100, 'reinvestment_rate_5y': float(reinvestment_rate_5y)/100,
-        'reinvestment_rate_5_10y': float(reinvestment_rate_5_10y)/100,
-        'std_growth_5y': float(std_growth_5y)/100, 'std_growth_5_10y': float(std_growth_5_10y)/100,
-        'std_risk_free': float(std_risk_free)/100, 'std_equity_premium': float(std_equity_premium)/100,
-        'std_WACC': float(std_WACC)/100, 'std_reinv_5y': float(std_reinv_5y)/100,
-        'std_reinv_5_10y': float(std_reinv_5_10y)/100, 'n_simulations': int(n_simulations)
+        'current_price': current_price, 'shares_outstanding': shares_outstanding,
+        'cash': cash, 'debt': debt, 'operating_income_base': operating_income_base,
+        'tax_rate': tax_rate/100,
+        'growth_rate_5y': growth_rate_5y/100, 'growth_rate_5_10y': growth_rate_5_10y/100,
+        'risk_free_rate': risk_free_rate/100, 'equity_risk_premium': equity_risk_premium/100,
+        'WACC': WACC/100, 'reinvestment_rate_5y': reinvestment_rate_5y/100,
+        'reinvestment_rate_5_10y': reinvestment_rate_5_10y/100,
+        'std_growth_5y': std_growth_5y/100, 'std_growth_5_10y': std_growth_5_10y/100,
+        'std_risk_free': std_risk_free/100, 'std_equity_premium': std_equity_premium/100,
+        'std_WACC': std_WACC/100, 'std_reinv_5y': std_reinv_5y/100,
+        'std_reinv_5_10y': std_reinv_5_10y/100, 'n_simulations': int(n_simulations)
     }
 
     with st.spinner("Running Monte Carlo simulation..."):
