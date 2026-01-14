@@ -42,61 +42,97 @@ def get_user_name_from_index():
                 user_names.add(user_name)
     return sorted(list(user_names))
 
+def normalize_user_key(user_name: str) -> str:
+    """Normalize a user name for matching (case-insensitive)."""
+    if user_name is None:
+        return ""
+    # casefold() is stronger than lower() for international characters
+    return str(user_name).strip().casefold()
+
 def get_user_id_from_name(user_name):
     """Get or create a user ID for a given user name"""
     import hashlib
-    # Create a consistent user_id from user_name (deterministic hash)
-    user_id = hashlib.md5(user_name.encode()).hexdigest()[:12]
+    # Create a consistent user_id from normalized name (deterministic hash)
+    key = normalize_user_key(user_name)
+    user_id = hashlib.md5(key.encode()).hexdigest()[:12]
     return user_id
 
 def is_user_name_taken(user_name):
-    """Check if a user name already exists in the analyses"""
-    if not user_name or not user_name.strip():
+    """
+    Check if a user has existing saved analyses (case-insensitive).
+
+    NOTE: This is *not* an auth check; it only tells us whether this name
+    matches any stored analyses.
+    """
+    key = normalize_user_key(user_name)
+    if not key:
         return False
-    existing_names = get_user_name_from_index()
-    return user_name.strip() in existing_names
+    idx = load_analyses_index()
+    for _ticker, analyses in idx.items():
+        for _analysis_id, info in analyses.items():
+            info_key = info.get("user_key") or normalize_user_key(info.get("user_name", ""))
+            if info_key == key:
+                return True
+    return False
 
 def get_user_name():
     """Get the current user's name (must be set before use)"""
     return st.session_state.get('user_name', None)
 
+def get_user_key():
+    """Get the current user's normalized key (case-insensitive)."""
+    key = st.session_state.get('user_key', None)
+    if key:
+        return key
+    # Backward compatible: derive from user_name if present
+    name = st.session_state.get('user_name', None)
+    derived = normalize_user_key(name)
+    if derived:
+        st.session_state.user_key = derived
+        return derived
+    return None
+
 def get_user_id():
     """Get the current user's ID (derived from name)"""
-    user_name = get_user_name()
-    if not user_name:
-        return None
-    return get_user_id_from_name(user_name)
+    return st.session_state.get("user_id", None)
 
 def set_user_name(name):
     """Set the user name and load their existing analyses"""
     if not name or not name.strip():
         return False
     
-    name = name.strip()
-    user_id = get_user_id_from_name(name)
+    name = str(name).strip()
+    user_key = normalize_user_key(name)
+    user_id = get_user_id_from_name(user_key)
     
     # Store user info
     st.session_state.user_name = name
+    st.session_state.user_key = user_key
     st.session_state.user_id = user_id
     st.session_state.user_initialized = True
     
     return True
 
 def get_user_analyses_index(user_name=None):
-    """Get analyses index filtered for a specific user by name"""
+    """Get analyses index filtered for a specific user (case-insensitive)."""
     if user_name is None:
-        user_name = get_user_name()
-        if not user_name:
+        user_key = get_user_key()
+        if not user_key:
+            return {}
+    else:
+        user_key = normalize_user_key(user_name)
+        if not user_key:
             return {}
     
     all_index = load_analyses_index()
     user_index = {}
     
-    # Filter by user_name
+    # Filter by user_key (preferred) or normalized user_name (backward compatible)
     for ticker, analyses in all_index.items():
         user_analyses = {}
         for analysis_id, analysis_info in analyses.items():
-            if analysis_info.get('user_name') == user_name:
+            info_key = analysis_info.get("user_key") or normalize_user_key(analysis_info.get("user_name", ""))
+            if info_key == user_key:
                 user_analyses[analysis_id] = analysis_info
         if user_analyses:
             user_index[ticker] = user_analyses
@@ -148,8 +184,12 @@ def validate_analysis_files(analysis_id):
 def cleanup_orphaned_analyses(user_name=None):
     """Remove entries from index where files no longer exist (for current user only)"""
     if user_name is None:
-        user_name = get_user_name()
-        if not user_name:
+        user_key = get_user_key()
+        if not user_key:
+            return False
+    else:
+        user_key = normalize_user_key(user_name)
+        if not user_key:
             return False
     
     index = load_analyses_index()
@@ -159,7 +199,8 @@ def cleanup_orphaned_analyses(user_name=None):
         for analysis_id in list(index[ticker].keys()):
             analysis_info = index[ticker][analysis_id]
             # Only clean up analyses belonging to this user
-            if analysis_info.get('user_name') == user_name:
+            info_key = analysis_info.get("user_key") or normalize_user_key(analysis_info.get("user_name", ""))
+            if info_key == user_key:
                 if not validate_analysis_files(analysis_id):
                     # File doesn't exist, remove from index
                     del index[ticker][analysis_id]
@@ -203,6 +244,7 @@ def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribut
             raise ValueError("User name must be set before saving analyses")
         
         user_id = get_user_id()
+        user_key = get_user_key() or normalize_user_key(user_name)
         index = load_analyses_index()
         if ticker not in index:
             index[ticker] = {}
@@ -212,8 +254,9 @@ def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribut
             'date': valuation_summary['date'],
             'analysis_id': analysis_id,
             'path': str(analysis_dir.absolute()),  # Store absolute path
-            'user_id': user_id,  # Store user ID for filtering
-            'user_name': user_name  # Store user name for display
+            'user_id': user_id,              # deterministic from user_key
+            'user_key': user_key,            # case-insensitive match key
+            'user_name': user_name           # display name (backward compatible)
         }
         
         if save_analyses_index(index):
@@ -261,8 +304,8 @@ def load_analysis(analysis_id):
 
 def delete_analysis(analysis_id):
     """Delete an analysis from disk and index (only if owned by current user)"""
-    user_name = get_user_name()
-    if not user_name:
+    user_key = get_user_key()
+    if not user_key:
         return
     
     index = load_analyses_index()
@@ -271,8 +314,9 @@ def delete_analysis(analysis_id):
     for ticker in list(index.keys()):
         if analysis_id in index[ticker]:
             analysis_info = index[ticker][analysis_id]
-            # Verify ownership by user_name
-            if analysis_info.get('user_name') == user_name:
+            # Verify ownership by user_key (case-insensitive, backward compatible)
+            info_key = analysis_info.get("user_key") or normalize_user_key(analysis_info.get("user_name", ""))
+            if info_key == user_key:
                 del index[ticker][analysis_id]
                 # Remove ticker entry if no analyses left
                 if not index[ticker]:
@@ -295,7 +339,8 @@ def display_saved_analyses():
     """Display the saved analyses organized by ticker (for current user only)"""
     # Check if user is set
     user_name = get_user_name()
-    if not user_name or not st.session_state.get('user_initialized'):
+    user_key = get_user_key()
+    if not user_key or not st.session_state.get('user_initialized'):
         st.warning("⚠️ Please set your user name at the top of the page to view your analyses.")
         return
     
@@ -308,9 +353,9 @@ def display_saved_analyses():
         
         **User Isolation:**
         - Each user has their own separate analyses section
-        - Analyses are tagged with your user name: **{user_name}**
+        - Analyses are tagged with your user name: **{user_name}** (matching is case-insensitive)
         - You can only see and manage your own analyses
-        - If another user uses the same name, you'll see a warning
+        - Entering the same name (e.g., Juan/juan) will retrieve the same analyses
         
         **Persistence:**
         - **Local deployment:** Analyses persist across app restarts
@@ -466,132 +511,60 @@ st.title("DCF Monte Carlo Valuation Tool")
 st.markdown("---")
 st.subheader("👤 User Identification")
 
-# Initialize user state if not present
 if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
-# ============================================================================
-# STEP 1: Process "Continue Anyway" action FIRST (before any other logic)
-# ============================================================================
-# When user clicks "Continue Anyway", we store the name in session state
-# On the next rerun, we process it here at the very top
-if st.session_state.get('_action_continue_anyway'):
-    continue_name = str(st.session_state.get('_action_continue_anyway')).strip()
-    if continue_name:
-        # Set user state using the helper function (same as new users)
-        set_user_name(continue_name)
-        # Explicitly ensure all state variables are set
-        st.session_state['user_name'] = continue_name
-        st.session_state['user_id'] = get_user_id_from_name(continue_name)
-        st.session_state['user_initialized'] = True
-        # Clear the action flag
-        st.session_state['_action_continue_anyway'] = None
-        # Force rerun to proceed with initialized state
-        st.rerun()
+# A user is considered logged in if we have a non-empty user_key.
+user_is_initialized = bool(get_user_key())
 
-# ============================================================================
-# STEP 2: Check and ensure user state is consistent
-# ============================================================================
-# If user_name exists in session state, ensure user_initialized is True
-if st.session_state.get('user_name'):
-    user_name_val = str(st.session_state.get('user_name')).strip()
-    if user_name_val:
-        # Ensure all state variables are set correctly
-        st.session_state['user_name'] = user_name_val
-        st.session_state['user_id'] = get_user_id_from_name(user_name_val)
-        st.session_state['user_initialized'] = True
-    else:
-        # Empty name, reset
-        st.session_state['user_initialized'] = False
-
-# ============================================================================
-# STEP 3: Determine if user is initialized
-# ============================================================================
-user_is_initialized = (
-    st.session_state.get('user_initialized') is True and
-    st.session_state.get('user_name') is not None and
-    str(st.session_state.get('user_name', '')).strip() != ''
-)
-
-
-# Render user input section only if not initialized
-# But first, we need to handle the "Continue Anyway" button if it exists
-# We'll check for it inside the block
 if not user_is_initialized:
-    col1, col2 = st.columns([3, 1])
-    with col1:
+    # Robust login: one form, one submit button.
+    # Entering an existing name logs you in (case-insensitive) and shows your analyses.
+    with st.form("user_login_form", clear_on_submit=False):
         user_input = st.text_input(
             "Enter your name/identifier:",
             key="user_name_input",
-            help="Enter a unique name to identify your analyses. This name will be used to save and retrieve your analyses.",
-            placeholder="e.g., John, Analyst_1, or your email"
+            help="Use the same name each time to retrieve your saved analyses. Matching is case-insensitive (Juan == juan).",
+            placeholder="e.g., Juan"
         )
-    with col2:
-        st.write("")  # Spacing
-        st.write("")  # Spacing
-        submit_user = st.button("Set Name", key="submit_user_name", type="primary")
-    
-    # Track if we're showing the warning (to show buttons)
-    showing_warning = False
-    warning_user_name = ""
-    
-    # Handle name submission
-    if submit_user and user_input:
-        user_input = user_input.strip()
-        if not user_input:
+        submitted = st.form_submit_button("Continue anyway", type="primary")
+
+    if submitted:
+        name = (user_input or "").strip()
+        if not name:
             st.error("Please enter a valid name.")
-        elif is_user_name_taken(user_input):
-            showing_warning = True
-            warning_user_name = user_input
-            st.warning(f"⚠️ The name '{user_input}' is already in use by another user.")
-            st.info("💡 If this is your name, you can continue. Your existing analyses will be loaded.")
         else:
-            # New user name, set it directly
-            if set_user_name(user_input):
-                st.success(f"✅ Name set to: {user_input}")
-                st.rerun()
-    elif submit_user:
-        st.error("Please enter a name before continuing.")
-    
-    # Show Continue Anyway / Choose Different buttons if warning is shown
-    if showing_warning:
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            continue_btn = st.button("Continue Anyway", key="continue_existing_user", type="primary")
-        with col2:
-            choose_different = st.button("Choose Different Name", key="choose_different")
-        
-        # Handle Continue Anyway button click
-        if continue_btn:
-            user_input_clean = warning_user_name.strip()
-            if user_input_clean:
-                # Store the action in session state - will be processed at top on next rerun
-                st.session_state['_action_continue_anyway'] = user_input_clean
-                # Immediately rerun - the check at the top will process it
-                st.rerun()
-        
-        # Handle Choose Different button click
-        elif choose_different:
-            # Just rerun to clear the warning and reset
+            existed = is_user_name_taken(name)
+            set_user_name(name)
+            # Show feedback and proceed in the SAME run (no fragile multi-click flows)
+            n = count_user_analyses(name)
+            if existed and n > 0:
+                st.success(f"✅ Welcome back, {get_user_name()}! Loaded {n} saved analyses.")
+            else:
+                st.success(f"✅ User set to: {get_user_name()}")
             st.rerun()
 else:
-    # User is already set, show current user info
     current_user = get_user_name()
     user_analyses_count = count_user_analyses(current_user)
-    
+
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        st.info(f"👤 **Current User:** {current_user}" + (f" ({user_analyses_count} analyses)" if user_analyses_count > 0 else ""))
+        st.info(
+            f"👤 **Current User:** {current_user}"
+            + (f" ({user_analyses_count} analyses)" if user_analyses_count > 0 else "")
+        )
     with col2:
         if st.button("Change User", key="change_user_btn"):
             st.session_state.user_initialized = False
             st.session_state.user_name = None
+            st.session_state.user_key = None
             st.session_state.user_id = None
             st.rerun()
     with col3:
         if st.button("Logout", key="logout_btn"):
             st.session_state.user_initialized = False
             st.session_state.user_name = None
+            st.session_state.user_key = None
             st.session_state.user_id = None
             st.rerun()
 
