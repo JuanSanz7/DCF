@@ -940,7 +940,6 @@ with st.sidebar.form("input_form"):
     # Currency se usa desde target_currency de arriba
 
     st.header("Financial Information")
-    st.caption("💡 **Tip:** Each field has a text box (with +/- buttons) where you can type values directly, plus a slider below for quick adjustment")
     
     # Check which values are missing (0) and show warning
     missing_fields = []
@@ -990,26 +989,38 @@ with st.sidebar.form("input_form"):
 
     # TODOS LOS PARÁMETROS ORIGINALES
     st.header("Growth Parameters")
-    growth_rate_5y = st.number_input("Growth Rate 5y (%)", min_value=-50.0, max_value=100.0, value=15.0, step=0.1)
-    growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", min_value=-50.0, max_value=100.0, value=8.0, step=0.1)
+    col1, col2 = st.columns(2)
+    with col1:
+        growth_rate_5y = st.number_input("Growth Rate 5y (%)", min_value=-50.0, max_value=100.0, value=15.0, step=0.1)
+    with col2:
+        growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", min_value=-50.0, max_value=100.0, value=8.0, step=0.1)
 
     st.header("Risk Parameters")
-    risk_free_rate = st.number_input("Risk Free Rate (%)", min_value=0.0, max_value=20.0, value=4.5, step=0.01)
-    equity_risk_premium = st.number_input("Equity Risk Premium (%)", min_value=0.0, max_value=15.0, value=5.13, step=0.01)
-    WACC = st.number_input("WACC (%)", min_value=0.0, max_value=30.0, value=9.6, step=0.1)
+    col1, col2 = st.columns(2)
+    with col1:
+        risk_free_rate = st.number_input("Risk Free Rate (%)", min_value=0.0, max_value=20.0, value=4.5, step=0.01)
+        equity_risk_premium = st.number_input("Equity Risk Premium (%)", min_value=0.0, max_value=15.0, value=5.13, step=0.01)
+    with col2:
+        WACC = st.number_input("WACC (%)", min_value=0.0, max_value=30.0, value=9.6, step=0.1)
 
     st.header("Reinvestment Rates")
-    reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.1)
-    reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.1)
+    col1, col2 = st.columns(2)
+    with col1:
+        reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.1)
+    with col2:
+        reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.1)
 
     st.header("Standard Deviations")
-    std_growth_5y = st.number_input("Std Growth 5y (%)", min_value=0.0, max_value=20.0, value=2.0, step=0.1)
-    std_growth_5_10y = st.number_input("Std Growth 5-10y (%)", min_value=0.0, max_value=20.0, value=3.0, step=0.1)
-    std_risk_free = st.number_input("Std Risk Free (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
-    std_equity_premium = st.number_input("Std Equity Premium (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
-    std_WACC = st.number_input("Std WACC (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
-    std_reinv_5y = st.number_input("Std Reinv 5y (%)", min_value=0.0, max_value=20.0, value=2.5, step=0.1)
-    std_reinv_5_10y = st.number_input("Std Reinv 5-10y (%)", min_value=0.0, max_value=20.0, value=5.0, step=0.1)
+    col1, col2 = st.columns(2)
+    with col1:
+        std_growth_5y = st.number_input("Std Growth 5y (%)", min_value=0.0, max_value=20.0, value=2.0, step=0.1)
+        std_growth_5_10y = st.number_input("Std Growth 5-10y (%)", min_value=0.0, max_value=20.0, value=3.0, step=0.1)
+        std_risk_free = st.number_input("Std Risk Free (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
+        std_equity_premium = st.number_input("Std Equity Premium (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
+    with col2:
+        std_WACC = st.number_input("Std WACC (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
+        std_reinv_5y = st.number_input("Std Reinv 5y (%)", min_value=0.0, max_value=20.0, value=2.5, step=0.1)
+        std_reinv_5_10y = st.number_input("Std Reinv 5-10y (%)", min_value=0.0, max_value=20.0, value=5.0, step=0.1)
 
     n_simulations = st.number_input("Simulations", min_value=1000, max_value=100000, value=10000, step=1000)
     submitted = st.form_submit_button("Run Simulation")
@@ -1212,4 +1223,5 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
