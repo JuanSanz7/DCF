@@ -79,30 +79,34 @@ div.stButton > button:active{
   transform: translateY(0px);
 }
 
-/* Run Simulation button (green) */
-.run-sim-btn div.stButton > button,
-.run-sim-btn div.stFormSubmitButton > button{
+/* Run Simulation button (green) — the only form submit in the sidebar */
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button{
   background: #16a34a !important; /* green */
   color: #ffffff !important;
+  border: 0 !important;
+  border-radius: var(--radius) !important;
+  padding: 0.6rem 1.05rem !important;
+  font-weight: 800 !important;
   box-shadow: 0 10px 22px rgba(22,163,74,0.20) !important;
 }
-.run-sim-btn div.stButton > button:hover,
-.run-sim-btn div.stFormSubmitButton > button:hover{
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button:hover{
   background: #15803d !important;
+  transform: translateY(-1px);
+}
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button:active{
+  transform: translateY(0px);
 }
 /* Ensure disabled/greyed state is still readable */
-.run-sim-btn div.stButton > button:disabled,
-.run-sim-btn div.stFormSubmitButton > button:disabled,
-.run-sim-btn div.stButton > button[disabled],
-.run-sim-btn div.stFormSubmitButton > button[disabled],
-.run-sim-btn div.stButton > button[aria-disabled="true"],
-.run-sim-btn div.stFormSubmitButton > button[aria-disabled="true"]{
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button:disabled,
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button[disabled],
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button[aria-disabled="true"]{
   background: #0f6d2e !important; /* dark green */
   color: #ffffff !important;
   opacity: 1 !important;
   filter: none !important;
   box-shadow: 0 10px 22px rgba(15,109,46,0.18) !important;
 }
+
 
 /* Make secondary buttons still readable */
 div.stButton > button[kind="secondary"]{
@@ -1687,6 +1691,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
