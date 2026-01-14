@@ -12,89 +12,24 @@ import requests
 from datetime import datetime
 from pathlib import Path
 from DCF_main import run_monte_carlo_simulation
-st.title("DCF Monte Carlo Valuation Tool")
 
-# --- USER IDENTIFICATION (MUST BE SET FIRST) ---
-st.markdown("---")
-st.subheader("👤 User Identification")
-
-# Initialize user state
-if 'user_initialized' not in st.session_state:
-    st.session_state.user_initialized = False
-
-# Get existing user names
-existing_users = get_user_name_from_index()
-
-# User name input
-if not st.session_state.user_initialized:
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        user_input = st.text_input(
-            "Enter your name/identifier:",
-            key="user_name_input",
-            help="Enter a unique name to identify your analyses. This name will be used to save and retrieve your analyses.",
-            placeholder="e.g., John, Analyst_1, or your email"
-        )
-    with col2:
-        st.write("")  # Spacing
-        st.write("")  # Spacing
-        submit_user = st.button("Set Name", key="submit_user_name", type="primary")
-    
-    if submit_user and user_input:
-        user_input = user_input.strip()
-        if not user_input:
-            st.error("Please enter a valid name.")
-        elif is_user_name_taken(user_input):
-            st.warning(f"⚠️ The name '{user_input}' is already in use by another user.")
-            st.info("💡 If this is your name, you can continue. Your existing analyses will be loaded.")
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                if st.button("Continue Anyway", key="continue_existing_user"):
-                    if set_user_name(user_input):
-                        existing_count = count_user_analyses(user_input)
-                        if existing_count > 0:
-                            st.success(f"✅ Welcome back, {user_input}! Found {existing_count} existing analyses.")
-                        else:
-                            st.success(f"✅ Name set to: {user_input}")
-                        st.rerun()
-            with col2:
-                if st.button("Choose Different Name", key="choose_different"):
-                    st.rerun()
-        else:
-            if set_user_name(user_input):
-                st.success(f"✅ Name set to: {user_input}")
-                st.rerun()
-    elif submit_user:
-        st.error("Please enter a name before continuing.")
-else:
-    # User is already set, show current user info
-    current_user = get_user_name()
-    user_analyses_count = count_user_analyses(current_user)
-    
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        st.info(f"👤 **Current User:** {current_user}" + (f" ({user_analyses_count} analyses)" if user_analyses_count > 0 else ""))
-    with col2:
-        if st.button("Change User", key="change_user_btn"):
-            st.session_state.user_initialized = False
-            st.session_state.user_name = None
-            st.session_state.user_id = None
-            st.rerun()
-    with col3:
-        if st.button("Logout", key="logout_btn"):
-            st.session_state.user_initialized = False
-            st.session_state.user_name = None
-            st.session_state.user_id = None
-            st.rerun()
-
-st.markdown("---")
-
-# --- ANALYSIS STORAGE FUNCTIONS ---
+# --- ANALYSIS STORAGE FUNCTIONS (MUST BE DEFINED FIRST) ---
 # Use absolute path for better persistence
 BASE_DIR = Path(__file__).parent.absolute()
 ANALYSES_DIR = BASE_DIR / "saved_analyses"
 ANALYSES_DIR.mkdir(exist_ok=True)
 ANALYSES_INDEX_FILE = ANALYSES_DIR / "analyses_index.json"
+
+def load_analyses_index():
+    """Load the index of all saved analyses"""
+    if ANALYSES_INDEX_FILE.exists():
+        try:
+            with open(ANALYSES_INDEX_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            # Don't show warning here as it might be called before Streamlit is ready
+            return {}
+    return {}
 
 def get_user_name_from_index():
     """Get all unique user names from the index"""
@@ -146,17 +81,6 @@ def set_user_name(name):
     st.session_state.user_initialized = True
     
     return True
-
-def load_analyses_index():
-    """Load the index of all saved analyses"""
-    if ANALYSES_INDEX_FILE.exists():
-        try:
-            with open(ANALYSES_INDEX_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            st.warning(f"Error loading analyses index: {e}. Starting with empty index.")
-            return {}
-    return {}
 
 def get_user_analyses_index(user_name=None):
     """Get analyses index filtered for a specific user by name"""
@@ -535,6 +459,80 @@ def display_analysis(analysis_id):
             Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
             </div>
         """, unsafe_allow_html=True)
+
+st.title("DCF Monte Carlo Valuation Tool")
+
+# --- USER IDENTIFICATION (MUST BE SET FIRST) ---
+st.markdown("---")
+st.subheader("👤 User Identification")
+
+# Initialize user state
+if 'user_initialized' not in st.session_state:
+    st.session_state.user_initialized = False
+
+# User name input
+if not st.session_state.user_initialized:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        user_input = st.text_input(
+            "Enter your name/identifier:",
+            key="user_name_input",
+            help="Enter a unique name to identify your analyses. This name will be used to save and retrieve your analyses.",
+            placeholder="e.g., John, Analyst_1, or your email"
+        )
+    with col2:
+        st.write("")  # Spacing
+        st.write("")  # Spacing
+        submit_user = st.button("Set Name", key="submit_user_name", type="primary")
+    
+    if submit_user and user_input:
+        user_input = user_input.strip()
+        if not user_input:
+            st.error("Please enter a valid name.")
+        elif is_user_name_taken(user_input):
+            st.warning(f"⚠️ The name '{user_input}' is already in use by another user.")
+            st.info("💡 If this is your name, you can continue. Your existing analyses will be loaded.")
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("Continue Anyway", key="continue_existing_user"):
+                    if set_user_name(user_input):
+                        existing_count = count_user_analyses(user_input)
+                        if existing_count > 0:
+                            st.success(f"✅ Welcome back, {user_input}! Found {existing_count} existing analyses.")
+                        else:
+                            st.success(f"✅ Name set to: {user_input}")
+                        st.rerun()
+            with col2:
+                if st.button("Choose Different Name", key="choose_different"):
+                    st.rerun()
+        else:
+            if set_user_name(user_input):
+                st.success(f"✅ Name set to: {user_input}")
+                st.rerun()
+    elif submit_user:
+        st.error("Please enter a name before continuing.")
+else:
+    # User is already set, show current user info
+    current_user = get_user_name()
+    user_analyses_count = count_user_analyses(current_user)
+    
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.info(f"👤 **Current User:** {current_user}" + (f" ({user_analyses_count} analyses)" if user_analyses_count > 0 else ""))
+    with col2:
+        if st.button("Change User", key="change_user_btn"):
+            st.session_state.user_initialized = False
+            st.session_state.user_name = None
+            st.session_state.user_id = None
+            st.rerun()
+    with col3:
+        if st.button("Logout", key="logout_btn"):
+            st.session_state.user_initialized = False
+            st.session_state.user_name = None
+            st.session_state.user_id = None
+            st.rerun()
+
+st.markdown("---")
 
 # --- TICKER SEARCH FUNCTIONALITY ---
 @st.cache_data(ttl=86400)  # Cache for 24 hours
