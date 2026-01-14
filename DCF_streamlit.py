@@ -471,7 +471,8 @@ if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
 # CRITICAL: Check for "Continue Anyway" action FIRST - before any other checks
-# Process any pending "Continue Anyway" actions from previous runs
+# This processes the action from the previous run when button was clicked
+continue_anyway_processed = False
 if st.session_state.get('continue_anyway_name'):
     continue_name = str(st.session_state.get('continue_anyway_name')).strip()
     if continue_name:
@@ -483,11 +484,15 @@ if st.session_state.get('continue_anyway_name'):
         st.session_state['user_id'] = get_user_id_from_name(continue_name)
         st.session_state.user_initialized = True
         st.session_state['user_initialized'] = True
-        # Clear the flag
-        st.session_state['continue_anyway_name'] = None
+        # Verify state was set correctly
+        if (st.session_state.get('user_name') == continue_name and 
+            st.session_state.get('user_initialized') is True):
+            continue_anyway_processed = True
+            # Clear the flag only after verification
+            st.session_state['continue_anyway_name'] = None
 
 # Also check the flag-based approach
-if st.session_state.get('_just_initialized_user') and st.session_state.get('_pending_user_name'):
+if not continue_anyway_processed and st.session_state.get('_just_initialized_user') and st.session_state.get('_pending_user_name'):
     pending_name = str(st.session_state.get('_pending_user_name')).strip()
     if pending_name:
         # Ensure state is definitely set using all methods
@@ -498,6 +503,10 @@ if st.session_state.get('_just_initialized_user') and st.session_state.get('_pen
         st.session_state['user_id'] = get_user_id_from_name(pending_name)
         st.session_state.user_initialized = True
         st.session_state['user_initialized'] = True
+        # Verify state was set
+        if (st.session_state.get('user_name') == pending_name and 
+            st.session_state.get('user_initialized') is True):
+            continue_anyway_processed = True
         # Clear the flags
         if '_just_initialized_user' in st.session_state:
             del st.session_state['_just_initialized_user']
@@ -524,12 +533,15 @@ if user_name_from_state:
         st.session_state['user_initialized'] = False
 
 # Determine if user is initialized - use simple, direct check
-# Check multiple times to ensure we catch any state that was just set
-user_is_initialized = False
-if st.session_state.get('user_initialized') is True:
-    user_name_check = st.session_state.get('user_name')
-    if user_name_check and str(user_name_check).strip() != '':
-        user_is_initialized = True
+# If continue_anyway was just processed, user is definitely initialized
+user_is_initialized = continue_anyway_processed
+
+# Check state if not already initialized from continue_anyway
+if not user_is_initialized:
+    if st.session_state.get('user_initialized') is True:
+        user_name_check = st.session_state.get('user_name')
+        if user_name_check and str(user_name_check).strip() != '':
+            user_is_initialized = True
 
 # FINAL SAFEGUARD: If user_name exists but initialized check failed, fix it
 # This ensures state is always consistent
@@ -1663,6 +1675,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
