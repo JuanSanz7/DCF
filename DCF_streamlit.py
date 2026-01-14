@@ -56,6 +56,11 @@ st.markdown(
   color: var(--muted-on-marine) !important;
 }
 
+/* Slider colors */
+[data-testid="stSidebar"] [data-baseweb="slider"] [role="slider"]{
+  background-color: var(--accent-500) !important;
+}
+
 /* Filled buttons (global) */
 div.stButton > button{
   background: var(--accent-500) !important;
@@ -72,6 +77,18 @@ div.stButton > button:hover{
 }
 div.stButton > button:active{
   transform: translateY(0px);
+}
+
+/* Run Simulation button (green) */
+.run-sim-btn div.stButton > button,
+.run-sim-btn div.stFormSubmitButton > button{
+  background: #16a34a !important; /* green */
+  color: #ffffff !important;
+  box-shadow: 0 10px 22px rgba(22,163,74,0.20) !important;
+}
+.run-sim-btn div.stButton > button:hover,
+.run-sim-btn div.stFormSubmitButton > button:hover{
+  background: #15803d !important;
 }
 
 /* Make secondary buttons still readable */
@@ -1450,7 +1467,9 @@ with st.sidebar.form("input_form"):
         std_reinv_5_10y = st.number_input("Std Reinv 5-10y (%)", min_value=0.0, max_value=20.0, value=5.0, step=0.1)
 
     n_simulations = st.number_input("Simulations", min_value=1000, max_value=100000, value=10000, step=1000)
+    st.markdown('<div class="run-sim-btn">', unsafe_allow_html=True)
     submitted = st.form_submit_button("Run Simulation")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # If an analysis is selected for viewing, force to else block for proper tab handling
 # This ensures consistent behavior whether coming from a new analysis or directly
@@ -1655,6 +1674,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
