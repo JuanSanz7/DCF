@@ -466,22 +466,35 @@ st.title("DCF Monte Carlo Valuation Tool")
 st.markdown("---")
 st.subheader("👤 User Identification")
 
-# Initialize user state
+# Initialize user state if not present
 if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
-# Verify user state is consistent and auto-initialize if user_name exists
-# This ensures state persists across reruns
-if st.session_state.get('user_name') and isinstance(st.session_state.get('user_name'), str) and st.session_state.get('user_name').strip():
-    user_name_val = st.session_state.get('user_name').strip()
-    # If user_name exists, ensure initialized is True
-    if not st.session_state.get('user_initialized') or st.session_state.get('user_name') != user_name_val:
-        st.session_state.user_name = user_name_val
-        st.session_state.user_id = get_user_id_from_name(user_name_val)
-        st.session_state.user_initialized = True
+# CRITICAL: Check and set user state BEFORE any conditionals
+# This must happen first to ensure state persists across reruns
+# Check if user_name exists in session state
+if 'user_name' in st.session_state:
+    user_name_from_state = st.session_state.get('user_name')
+    if user_name_from_state:
+        try:
+            user_name_val = str(user_name_from_state).strip()
+            if user_name_val:
+                # If user_name exists and is valid, ensure initialized is True
+                st.session_state.user_name = user_name_val
+                st.session_state.user_id = get_user_id_from_name(user_name_val)
+                st.session_state.user_initialized = True
+        except (AttributeError, TypeError):
+            # If user_name is not a valid string, reset it
+            st.session_state.user_name = None
+            st.session_state.user_initialized = False
+    else:
+        # user_name is empty/None, ensure initialized is False
+        st.session_state.user_initialized = False
 
 # User name input - only show if user is not initialized
-if not st.session_state.user_initialized:
+# This check happens AFTER we've ensured state is consistent
+# Use explicit True check to avoid any truthiness issues
+if st.session_state.get('user_initialized') is not True:
     col1, col2 = st.columns([3, 1])
     with col1:
         user_input = st.text_input(
@@ -526,24 +539,17 @@ if not st.session_state.user_initialized:
             choose_different = st.button("Choose Different Name", key="choose_different")
         
         if continue_btn:
-            # Set user name directly and immediately - no pending state needed
+            # Set user name directly and immediately
             user_input_clean = warning_user_name.strip()
             if user_input_clean:
-                # Set all state variables atomically using update
-                user_id_val = get_user_id_from_name(user_input_clean)
-                st.session_state.update({
-                    'user_name': user_input_clean,
-                    'user_id': user_id_val,
-                    'user_initialized': True
-                })
+                # Set all state variables using direct assignment
+                # This ensures the state is definitely set
+                st.session_state.user_name = user_input_clean
+                st.session_state.user_id = get_user_id_from_name(user_input_clean)
+                st.session_state.user_initialized = True
                 
-                # Verify state was set correctly
-                if (st.session_state.get('user_initialized') == True and 
-                    st.session_state.get('user_name') == user_input_clean):
-                    # Force immediate rerun - state should persist
-                    st.rerun()
-                else:
-                    st.error("❌ Failed to set user name. Please try again.")
+                # Immediately rerun - the state check at the top will recognize it
+                st.rerun()
         elif choose_different:
             # Just rerun to clear the warning
             st.rerun()
@@ -1564,3 +1570,4 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
