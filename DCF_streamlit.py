@@ -470,49 +470,6 @@ st.subheader("👤 User Identification")
 if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
-# CRITICAL: Check for "Continue Anyway" action FIRST - before any other checks
-# This processes the action from the previous run when button was clicked
-continue_anyway_processed = False
-if st.session_state.get('continue_anyway_name'):
-    continue_name = str(st.session_state.get('continue_anyway_name')).strip()
-    if continue_name:
-        # Set state immediately using all methods to ensure it persists
-        set_user_name(continue_name)
-        st.session_state.user_name = continue_name
-        st.session_state['user_name'] = continue_name
-        st.session_state.user_id = get_user_id_from_name(continue_name)
-        st.session_state['user_id'] = get_user_id_from_name(continue_name)
-        st.session_state.user_initialized = True
-        st.session_state['user_initialized'] = True
-        # Verify state was set correctly
-        if (st.session_state.get('user_name') == continue_name and 
-            st.session_state.get('user_initialized') is True):
-            continue_anyway_processed = True
-            # Clear the flag only after verification
-            st.session_state['continue_anyway_name'] = None
-
-# Also check the flag-based approach
-if not continue_anyway_processed and st.session_state.get('_just_initialized_user') and st.session_state.get('_pending_user_name'):
-    pending_name = str(st.session_state.get('_pending_user_name')).strip()
-    if pending_name:
-        # Ensure state is definitely set using all methods
-        set_user_name(pending_name)
-        st.session_state.user_name = pending_name
-        st.session_state['user_name'] = pending_name
-        st.session_state.user_id = get_user_id_from_name(pending_name)
-        st.session_state['user_id'] = get_user_id_from_name(pending_name)
-        st.session_state.user_initialized = True
-        st.session_state['user_initialized'] = True
-        # Verify state was set
-        if (st.session_state.get('user_name') == pending_name and 
-            st.session_state.get('user_initialized') is True):
-            continue_anyway_processed = True
-        # Clear the flags
-        if '_just_initialized_user' in st.session_state:
-            del st.session_state['_just_initialized_user']
-        if '_pending_user_name' in st.session_state:
-            del st.session_state['_pending_user_name']
-
 # CRITICAL: Check and set user state BEFORE any conditionals
 # If user_name exists and is valid, ensure initialized is True
 user_name_from_state = st.session_state.get('user_name')
@@ -533,15 +490,11 @@ if user_name_from_state:
         st.session_state['user_initialized'] = False
 
 # Determine if user is initialized - use simple, direct check
-# If continue_anyway was just processed, user is definitely initialized
-user_is_initialized = continue_anyway_processed
-
-# Check state if not already initialized from continue_anyway
-if not user_is_initialized:
-    if st.session_state.get('user_initialized') is True:
-        user_name_check = st.session_state.get('user_name')
-        if user_name_check and str(user_name_check).strip() != '':
-            user_is_initialized = True
+user_is_initialized = False
+if st.session_state.get('user_initialized') is True:
+    user_name_check = st.session_state.get('user_name')
+    if user_name_check and str(user_name_check).strip() != '':
+        user_is_initialized = True
 
 # FINAL SAFEGUARD: If user_name exists but initialized check failed, fix it
 # This ensures state is always consistent
@@ -606,57 +559,18 @@ if not user_is_initialized:
         with col2:
             choose_different = st.button("Choose Different Name", key="choose_different")
         
-        # Handle Continue Anyway button click
+        # Handle Continue Anyway button click - EXACTLY like setting a new user
         if continue_btn:
             user_input_clean = warning_user_name.strip()
             if user_input_clean:
-                # CRITICAL: Set state using ALL methods to ensure it persists
-                user_id_val = get_user_id_from_name(user_input_clean)
-                
-                # Method 1: Use update() to set all at once
-                st.session_state.update({
-                    'user_name': user_input_clean,
-                    'user_id': user_id_val,
-                    'user_initialized': True
-                })
-                
-                # Method 2: Use helper function
-                set_user_name(user_input_clean)
-                
-                # Method 3: Set with dot notation
-                st.session_state.user_name = user_input_clean
-                st.session_state.user_id = user_id_val
-                st.session_state.user_initialized = True
-                
-                # Method 4: Set with bracket notation
-                st.session_state['user_name'] = user_input_clean
-                st.session_state['user_id'] = user_id_val
-                st.session_state['user_initialized'] = True
-                
-                # Store flag for processing on next rerun (redundancy)
-                st.session_state['continue_anyway_name'] = user_input_clean
-                
-                # Verify state is set before rerunning
-                if (st.session_state.get('user_name') == user_input_clean and 
-                    st.session_state.get('user_initialized') is True):
-                    # State is definitely set - rerun to proceed
-                    st.rerun()
-                else:
-                    # If somehow state wasn't set, set it again and rerun
-                    st.session_state['user_name'] = user_input_clean
-                    st.session_state['user_id'] = user_id_val
-                    st.session_state['user_initialized'] = True
+                # Use the exact same flow as new user: call set_user_name() and rerun
+                if set_user_name(user_input_clean):
+                    st.success(f"✅ Name set to: {user_input_clean}")
                     st.rerun()
         
         # Handle Choose Different button click
         elif choose_different:
-            # Clear any pending state and just rerun to reset
-            if 'continue_anyway_name' in st.session_state:
-                del st.session_state['continue_anyway_name']
-            if '_just_initialized_user' in st.session_state:
-                del st.session_state['_just_initialized_user']
-            if '_pending_user_name' in st.session_state:
-                del st.session_state['_pending_user_name']
+            # Just rerun to clear the warning and reset
             st.rerun()
 else:
     # User is already set, show current user info
@@ -1675,6 +1589,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
