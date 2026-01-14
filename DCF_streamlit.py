@@ -518,27 +518,34 @@ if 'user_initialized' not in st.session_state:
 user_is_initialized = bool(get_user_key())
 
 if not user_is_initialized:
-    # Robust login: one form, one submit button.
-    # Entering an existing name logs you in (case-insensitive) and shows your analyses.
-    with st.form("user_login_form", clear_on_submit=False):
-        user_input = st.text_input(
-            "Enter your name/identifier:",
-            key="user_name_input",
-            help="Use the same name each time to retrieve your saved analyses. Matching is case-insensitive (Juan == juan).",
-            placeholder="e.g., Juan"
-        )
-        submitted = st.form_submit_button("Continue anyway", type="primary")
+    # Robust login: neutral by default.
+    # If the typed name has saved analyses, we show a warning + "Continue anyway".
+    # Otherwise we show a normal "Continue" for a new user.
+    user_input = st.text_input(
+        "Enter your name/identifier:",
+        key="user_name_input",
+        help="Use the same name each time to retrieve your saved analyses. Matching is case-insensitive (Juan == juan).",
+        placeholder="e.g., Juan"
+    )
 
-    if submitted:
-        name = (user_input or "").strip()
-        if not name:
+    typed_name = (user_input or "").strip()
+    existing_count = count_user_analyses(typed_name) if typed_name else 0
+    has_existing_analyses = existing_count > 0
+
+    if has_existing_analyses:
+        st.warning(f"⚠️ The name '{typed_name}' already has saved analyses.")
+        st.info("💡 If this is your user and you want to log in and load your saved analyses, click **Continue anyway**.")
+        proceed = st.button("Continue anyway", type="primary", key="login_continue_anyway")
+    else:
+        proceed = st.button("Continue", type="primary", key="login_continue")
+
+    if proceed:
+        if not typed_name:
             st.error("Please enter a valid name.")
         else:
-            existed = is_user_name_taken(name)
-            set_user_name(name)
-            # Show feedback and proceed in the SAME run (no fragile multi-click flows)
-            n = count_user_analyses(name)
-            if existed and n > 0:
+            set_user_name(typed_name)
+            n = count_user_analyses(typed_name)
+            if n > 0:
                 st.success(f"✅ Welcome back, {get_user_name()}! Loaded {n} saved analyses.")
             else:
                 st.success(f"✅ User set to: {get_user_name()}")
