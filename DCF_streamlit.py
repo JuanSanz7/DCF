@@ -470,30 +470,14 @@ st.subheader("👤 User Identification")
 if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
-# Verify user state is consistent
-if st.session_state.get('user_initialized') and get_user_name():
-    # User is properly initialized, proceed to main app
-    pass
-elif st.session_state.get('user_initialized') and not get_user_name():
-    # State says initialized but no name - reset
-    st.session_state.user_initialized = False
+# Verify user state is consistent and auto-initialize if user_name exists
+if st.session_state.get('user_name') and st.session_state.get('user_name').strip():
+    # If user_name exists, ensure initialized is True
+    if not st.session_state.get('user_initialized'):
+        st.session_state.user_initialized = True
+        st.session_state.user_id = get_user_id_from_name(st.session_state.user_name)
 
-# Check for pending user name set action (from Continue Anyway button)
-if 'pending_continue_user' in st.session_state and st.session_state.pending_continue_user:
-    pending_name = st.session_state.get('pending_user_name', '')
-    if pending_name:
-        if set_user_name(pending_name):
-            existing_count = count_user_analyses(pending_name)
-            if existing_count > 0:
-                st.success(f"✅ Welcome back, {pending_name}! Found {existing_count} existing analyses.")
-            else:
-                st.success(f"✅ Name set to: {pending_name}")
-            # Clear pending state
-            del st.session_state.pending_continue_user
-            del st.session_state.pending_user_name
-            st.rerun()
-
-# User name input
+# User name input - only show if user is not initialized
 if not st.session_state.user_initialized:
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -523,16 +507,27 @@ if not st.session_state.user_initialized:
                 choose_different = st.button("Choose Different Name", key="choose_different")
             
             if continue_btn:
-                # Store in session state to process on next run
-                st.session_state.pending_user_name = user_input
-                st.session_state.pending_continue_user = True
-                st.rerun()
+                # Set user name directly and immediately
+                user_input_clean = user_input.strip()
+                
+                # Set all state variables explicitly
+                st.session_state.user_name = user_input_clean
+                st.session_state.user_id = get_user_id_from_name(user_input_clean)
+                st.session_state.user_initialized = True
+                
+                # Verify state is set
+                if st.session_state.get('user_initialized') and st.session_state.get('user_name') == user_input_clean:
+                    existing_count = count_user_analyses(user_input_clean)
+                    if existing_count > 0:
+                        st.success(f"✅ Welcome back, {user_input_clean}! Found {existing_count} existing analyses.")
+                    else:
+                        st.success(f"✅ Name set to: {user_input_clean}")
+                    # Force rerun to proceed to main app - this should skip the user input section
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to set user name. Please try again.")
             elif choose_different:
-                # Clear any pending state and rerun
-                if 'pending_user_name' in st.session_state:
-                    del st.session_state.pending_user_name
-                if 'pending_continue_user' in st.session_state:
-                    del st.session_state.pending_continue_user
+                # Just rerun to clear the warning
                 st.rerun()
         else:
             # New user name, set it directly
