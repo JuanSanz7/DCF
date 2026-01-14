@@ -255,7 +255,12 @@ with st.sidebar:
     target_currency = st.text_input("Target Currency", value="USD").upper()
     if st.button("Fetch & Auto-fill"):
         res = fetch_data(t_input, target_currency)
-        if res: st.session_state.st_vals.update(res)
+        if res: 
+            st.session_state.st_vals.update(res)
+            st.success(f"Data fetched for {t_input}! Values updated.")
+            st.rerun()
+        else:
+            st.error(f"Failed to fetch data for {t_input}. Please check the ticker symbol.")
 
 with st.sidebar.form("input_form"):
     st.header("Company Information")
@@ -265,12 +270,18 @@ with st.sidebar.form("input_form"):
     st.header("Financial Information")
     col1, col2 = st.columns(2)
     with col1:
-        current_price = st.slider("Current Price", min_value=0.0, max_value=10000.0, value=float(st.session_state.st_vals['price']), step=0.1)
-        shares_outstanding = st.slider("Shares Outstanding (millions)", min_value=0.0, max_value=100000.0, value=float(st.session_state.st_vals['shares']), step=1.0)
-        cash = st.slider("Cash (millions)", min_value=0.0, max_value=1000000.0, value=float(st.session_state.st_vals['cash']), step=100.0)
+        # Dynamically adjust max based on current value to accommodate fetched data
+        price_max = max(10000.0, float(st.session_state.st_vals['price']) * 2)
+        shares_max = max(100000.0, float(st.session_state.st_vals['shares']) * 2)
+        cash_max = max(1000000.0, float(st.session_state.st_vals['cash']) * 2)
+        current_price = st.slider("Current Price", min_value=0.0, max_value=price_max, value=float(st.session_state.st_vals['price']), step=0.1)
+        shares_outstanding = st.slider("Shares Outstanding (millions)", min_value=0.0, max_value=shares_max, value=float(st.session_state.st_vals['shares']), step=1.0)
+        cash = st.slider("Cash (millions)", min_value=0.0, max_value=cash_max, value=float(st.session_state.st_vals['cash']), step=100.0)
     with col2:
-        operating_income_base = st.slider("Operating Income Base (millions)", min_value=0.0, max_value=1000000.0, value=float(st.session_state.st_vals['ebit']), step=100.0)
-        debt = st.slider("Debt (millions)", min_value=0.0, max_value=1000000.0, value=float(st.session_state.st_vals['debt']), step=100.0)
+        ebit_max = max(1000000.0, float(st.session_state.st_vals['ebit']) * 2)
+        debt_max = max(1000000.0, float(st.session_state.st_vals['debt']) * 2)
+        operating_income_base = st.slider("Operating Income Base (millions)", min_value=0.0, max_value=ebit_max, value=float(st.session_state.st_vals['ebit']), step=100.0)
+        debt = st.slider("Debt (millions)", min_value=0.0, max_value=debt_max, value=float(st.session_state.st_vals['debt']), step=100.0)
         tax_rate = st.slider("Tax Rate (%)", min_value=0.0, max_value=50.0, value=21.0, step=0.1) # NUEVO
     
     # Calculate and display implied NOPAT
