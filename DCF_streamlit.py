@@ -2,6 +2,91 @@
 import streamlit as st
 st.set_page_config(page_title="DCF Monte Carlo Valuation Tool", layout="wide")
 
+st.markdown(
+    """
+<style>
+/* ------------------------------
+   Modern theme (sidebar + buttons)
+   ------------------------------ */
+:root{
+  --marine-900: #06283a;   /* deep marine */
+  --marine-800: #0b344a;   /* sidebar surface */
+  --marine-700: #0f415c;   /* widget surface */
+  --accent-500: #12b3d6;   /* filled buttons */
+  --accent-600: #0fa3c4;   /* hover */
+  --text-on-marine: #eaf6ff;
+  --muted-on-marine: rgba(234,246,255,0.75);
+  --radius: 12px;
+}
+
+/* Sidebar background */
+[data-testid="stSidebar"]{
+  background: linear-gradient(180deg, var(--marine-800) 0%, var(--marine-900) 100%) !important;
+}
+[data-testid="stSidebar"] *{
+  color: var(--text-on-marine);
+}
+
+/* Sidebar section spacing */
+[data-testid="stSidebar"] .block-container{
+  padding-top: 1rem;
+}
+
+/* Inputs inside sidebar */
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea{
+  background: rgba(255,255,255,0.08) !important;
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  color: var(--text-on-marine) !important;
+  border-radius: var(--radius) !important;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] > div{
+  background: rgba(255,255,255,0.08) !important;
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  border-radius: var(--radius) !important;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] *{
+  color: var(--text-on-marine) !important;
+}
+[data-testid="stSidebar"] label{
+  color: var(--muted-on-marine) !important;
+}
+
+/* Slider colors */
+[data-testid="stSidebar"] [data-baseweb="slider"] [role="slider"]{
+  background-color: var(--accent-500) !important;
+}
+
+/* Filled buttons (global) */
+div.stButton > button{
+  background: var(--accent-500) !important;
+  color: #05212f !important;
+  border: 0 !important;
+  border-radius: var(--radius) !important;
+  padding: 0.6rem 1.05rem !important;
+  font-weight: 700 !important;
+  box-shadow: 0 10px 22px rgba(18,179,214,0.18) !important;
+}
+div.stButton > button:hover{
+  background: var(--accent-600) !important;
+  transform: translateY(-1px);
+}
+div.stButton > button:active{
+  transform: translateY(0px);
+}
+
+/* Make secondary buttons still readable */
+div.stButton > button[kind="secondary"]{
+  background: rgba(255,255,255,0.10) !important;
+  color: var(--text-on-marine) !important;
+  border: 1px solid rgba(255,255,255,0.20) !important;
+  box-shadow: none !important;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 import matplotlib.pyplot as plt
 import io
 import yfinance as yf
@@ -1571,6 +1656,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
