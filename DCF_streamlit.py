@@ -470,44 +470,7 @@ st.subheader("👤 User Identification")
 if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
-# CRITICAL: Check for pending "Continue Anyway" action FIRST
-# This must happen before any other state checks
-# When user clicks "Continue Anyway", we store the name here and process it on next rerun
-if st.session_state.get('_pending_continue_user_name'):
-    pending_name = str(st.session_state.get('_pending_continue_user_name')).strip()
-    if pending_name:
-        # Set user state using the same function as new users
-        set_user_name(pending_name)
-        # Also set explicitly to ensure it's definitely set
-        st.session_state.user_name = pending_name
-        st.session_state['user_name'] = pending_name
-        st.session_state.user_id = get_user_id_from_name(pending_name)
-        st.session_state['user_id'] = get_user_id_from_name(pending_name)
-        st.session_state.user_initialized = True
-        st.session_state['user_initialized'] = True
-        # Verify state is set
-        if (st.session_state.get('user_name') == pending_name and 
-            st.session_state.get('user_initialized') is True):
-            # Mark that we just processed continue - this will be checked below
-            st.session_state['_just_processed_continue'] = True
-            # Clear the pending flag
-            st.session_state['_pending_continue_user_name'] = None
-            # Force rerun to proceed with initialized state
-            st.rerun()
-        else:
-            # If state wasn't set correctly, try again
-            st.session_state['user_name'] = pending_name
-            st.session_state['user_id'] = get_user_id_from_name(pending_name)
-            st.session_state['user_initialized'] = True
-            st.session_state['_just_processed_continue'] = True
-            st.session_state['_pending_continue_user_name'] = None
-            st.rerun()
-
-# Check if we just processed continue action
-just_processed_continue = st.session_state.get('_just_processed_continue', False)
-if just_processed_continue:
-    # Clear the flag after using it
-    st.session_state['_just_processed_continue'] = False
+# No special handling needed - state will be checked below
 
 # CRITICAL: Check and set user state BEFORE any conditionals
 # If user_name exists and is valid, ensure initialized is True
@@ -529,24 +492,20 @@ if user_name_from_state:
         st.session_state['user_initialized'] = False
 
 # Determine if user is initialized - use simple, direct check
-# If we just processed continue_anyway, user is definitely initialized
-user_is_initialized = just_processed_continue
-
-# Check state if not already initialized from continue_anyway
-if not user_is_initialized:
-    if st.session_state.get('user_initialized') is True:
-        user_name_check = st.session_state.get('user_name')
-        if user_name_check and str(user_name_check).strip() != '':
-            user_is_initialized = True
-    # Also check if user_name exists (fallback)
-    elif st.session_state.get('user_name'):
-        user_name_val = str(st.session_state.get('user_name')).strip()
-        if user_name_val:
-            # Force initialization
-            set_user_name(user_name_val)
-            st.session_state.user_initialized = True
-            st.session_state['user_initialized'] = True
-            user_is_initialized = True
+user_is_initialized = False
+if st.session_state.get('user_initialized') is True:
+    user_name_check = st.session_state.get('user_name')
+    if user_name_check and str(user_name_check).strip() != '':
+        user_is_initialized = True
+# Also check if user_name exists (fallback)
+if not user_is_initialized and st.session_state.get('user_name'):
+    user_name_val = str(st.session_state.get('user_name')).strip()
+    if user_name_val:
+        # Force initialization
+        set_user_name(user_name_val)
+        st.session_state.user_initialized = True
+        st.session_state['user_initialized'] = True
+        user_is_initialized = True
 
 # FINAL SAFEGUARD: If user_name exists but initialized check failed, fix it
 # This ensures state is always consistent
@@ -564,16 +523,6 @@ if not user_is_initialized:
         st.session_state['user_initialized'] = True
         user_is_initialized = True
 
-# Final verification: if we just processed continue, ensure user_is_initialized is True
-if just_processed_continue and not user_is_initialized:
-    # This shouldn't happen, but if it does, force initialization
-    if st.session_state.get('user_name'):
-        user_name_val = str(st.session_state.get('user_name')).strip()
-        if user_name_val:
-            set_user_name(user_name_val)
-            st.session_state.user_initialized = True
-            st.session_state['user_initialized'] = True
-            user_is_initialized = True
 
 # Render user input section only if not initialized
 # But first, we need to handle the "Continue Anyway" button if it exists
@@ -622,15 +571,14 @@ if not user_is_initialized:
         with col2:
             choose_different = st.button("Choose Different Name", key="choose_different")
         
-        # Handle Continue Anyway button click
+        # Handle Continue Anyway button click - EXACTLY like "Set Name" for new users
         if continue_btn:
             user_input_clean = warning_user_name.strip()
             if user_input_clean:
-                # Store the name in session state to process on next rerun
-                # This ensures the state is set before any conditionals run
-                st.session_state['_pending_continue_user_name'] = user_input_clean
-                # Immediately rerun - the check at the top will process it
-                st.rerun()
+                # Use the exact same flow as new user: call set_user_name() and rerun
+                if set_user_name(user_input_clean):
+                    st.success(f"✅ Welcome back, {user_input_clean}! Loading your analyses...")
+                    st.rerun()
         
         # Handle Choose Different button click
         elif choose_different:
@@ -1653,6 +1601,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
