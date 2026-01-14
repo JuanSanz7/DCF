@@ -867,42 +867,37 @@ def create_dual_input(label, min_val, max_val, value, step, key_prefix, help_tex
     
     current_val = st.session_state[state_key]
     
-    # Create columns for side-by-side layout
-    col_text, col_slider = st.columns([1, 2])
+    # Text input for direct typing (clear text box) - stacked vertically (works in sidebar)
+    text_input_key = f"{key_prefix}_text"
+    if text_input_key not in st.session_state:
+        st.session_state[text_input_key] = str(current_val)
     
-    with col_text:
-        # Text input for direct typing (clear text box)
-        text_input_key = f"{key_prefix}_text"
-        if text_input_key not in st.session_state:
-            st.session_state[text_input_key] = str(current_val)
-        
-        text_value = st.text_input(
-            label,
-            value=st.session_state[text_input_key],
-            key=text_input_key,
-            help=(help_text or "Type a value directly in this text box") + " | Use slider on the right"
-        )
-        
-        # Convert text to number, with validation
-        try:
-            num_value = float(text_value) if text_value else current_val
-            # Clamp to min/max
-            num_value = max(min_val, min(max_val, num_value))
-        except (ValueError, TypeError):
-            num_value = current_val
-            st.session_state[text_input_key] = str(current_val)
+    text_value = st.text_input(
+        label,
+        value=st.session_state[text_input_key],
+        key=text_input_key,
+        help=(help_text or "Type a value directly in this text box") + " | Use slider below for quick adjustment"
+    )
     
-    with col_slider:
-        # Slider for dragging - syncs with text input
-        slider_value = st.slider(
-            "↔️ Slider",
-            min_value=min_val,
-            max_value=max_val,
-            value=current_val,
-            step=step,
-            key=f"{key_prefix}_slider",
-            help="Drag to adjust the value in the text box"
-        )
+    # Convert text to number, with validation
+    try:
+        num_value = float(text_value) if text_value else current_val
+        # Clamp to min/max
+        num_value = max(min_val, min(max_val, num_value))
+    except (ValueError, TypeError):
+        num_value = current_val
+        st.session_state[text_input_key] = str(current_val)
+    
+    # Slider for dragging - syncs with text input (stacked below text input)
+    slider_value = st.slider(
+        "↔️ Slider",
+        min_value=min_val,
+        max_value=max_val,
+        value=current_val,
+        step=step,
+        key=f"{key_prefix}_slider",
+        help="Drag to adjust the value in the text box above"
+    )
     
     # Determine final value: prioritize the one that changed
     final_value = current_val
@@ -1282,4 +1277,3 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
-
