@@ -15,67 +15,155 @@ from DCF_main import run_monte_carlo_simulation
 st.title("DCF Monte Carlo Valuation Tool")
 
 # --- ANALYSIS STORAGE FUNCTIONS ---
-ANALYSES_DIR = Path("saved_analyses")
+# Use absolute path for better persistence
+BASE_DIR = Path(__file__).parent.absolute()
+ANALYSES_DIR = BASE_DIR / "saved_analyses"
 ANALYSES_DIR.mkdir(exist_ok=True)
 ANALYSES_INDEX_FILE = ANALYSES_DIR / "analyses_index.json"
 
 def load_analyses_index():
     """Load the index of all saved analyses"""
     if ANALYSES_INDEX_FILE.exists():
-        with open(ANALYSES_INDEX_FILE, 'r') as f:
-            return json.load(f)
+        try:
+            with open(ANALYSES_INDEX_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            st.warning(f"Error loading analyses index: {e}. Starting with empty index.")
+            return {}
     return {}
 
 def save_analyses_index(index):
-    """Save the index of all analyses"""
-    with open(ANALYSES_INDEX_FILE, 'w') as f:
-        json.dump(index, f, indent=2)
+    """Save the index of all analyses with error handling"""
+    try:
+        # Create backup before saving
+        if ANALYSES_INDEX_FILE.exists():
+            backup_file = ANALYSES_INDEX_FILE.with_suffix('.json.bak')
+            shutil.copy2(ANALYSES_INDEX_FILE, backup_file)
+        
+        # Save with atomic write (write to temp file first, then rename)
+        temp_file = ANALYSES_INDEX_FILE.with_suffix('.json.tmp')
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            json.dump(index, f, indent=2, ensure_ascii=False)
+        
+        # Atomic rename
+        temp_file.replace(ANALYSES_INDEX_FILE)
+        return True
+    except Exception as e:
+        st.error(f"Error saving analyses index: {e}")
+        return False
+
+def validate_analysis_files(analysis_id):
+    """Check if analysis files still exist on disk"""
+    analysis_dir = ANALYSES_DIR / analysis_id
+    if not analysis_dir.exists():
+        return False
+    
+    # Check for required files
+    required_files = [
+        analysis_dir / "results_plot.png",
+        analysis_dir / "valuation_summary.json"
+    ]
+    
+    return all(f.exists() for f in required_files)
+
+def cleanup_orphaned_analyses():
+    """Remove entries from index where files no longer exist"""
+    index = load_analyses_index()
+    cleaned = False
+    
+    for ticker in list(index.keys()):
+        for analysis_id in list(index[ticker].keys()):
+            if not validate_analysis_files(analysis_id):
+                # File doesn't exist, remove from index
+                del index[ticker][analysis_id]
+                cleaned = True
+        
+        # Remove empty ticker entries
+        if not index[ticker]:
+            del index[ticker]
+    
+    if cleaned:
+        save_analyses_index(index)
+        return True
+    return False
 
 def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribution_only, fig_sensitivity):
-    """Save an analysis to disk"""
+    """Save an analysis to disk with error handling"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     analysis_id = f"{ticker}_{timestamp}"
     analysis_dir = ANALYSES_DIR / analysis_id
-    analysis_dir.mkdir(exist_ok=True)
     
-    # Save only the results plot
-    fig_es.savefig(analysis_dir / "results_plot.png", dpi=150, bbox_inches='tight')
-    
-    # Save valuation summary as JSON
-    with open(analysis_dir / "valuation_summary.json", 'w') as f:
-        json.dump(valuation_summary, f, indent=2)
-    
-    # Update index
-    index = load_analyses_index()
-    if ticker not in index:
-        index[ticker] = {}
-    index[ticker][analysis_id] = {
-        'company_name': company_name,
-        'timestamp': timestamp,
-        'date': valuation_summary['date'],
-        'analysis_id': analysis_id,
-        'path': str(analysis_dir)
-    }
-    save_analyses_index(index)
-    return analysis_id
+    try:
+        # Create directory
+        analysis_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Save only the results plot
+        plot_path = analysis_dir / "results_plot.png"
+        fig_es.savefig(plot_path, dpi=150, bbox_inches='tight')
+        
+        # Save valuation summary as JSON
+        summary_path = analysis_dir / "valuation_summary.json"
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(valuation_summary, f, indent=2, ensure_ascii=False)
+        
+        # Verify files were saved
+        if not plot_path.exists() or not summary_path.exists():
+            raise IOError("Failed to save analysis files")
+        
+        # Update index
+        index = load_analyses_index()
+        if ticker not in index:
+            index[ticker] = {}
+        index[ticker][analysis_id] = {
+            'company_name': company_name,
+            'timestamp': timestamp,
+            'date': valuation_summary['date'],
+            'analysis_id': analysis_id,
+            'path': str(analysis_dir.absolute())  # Store absolute path
+        }
+        
+        if save_analyses_index(index):
+            return analysis_id
+        else:
+            raise Exception("Failed to save index")
+            
+    except Exception as e:
+        st.error(f"Error saving analysis: {e}")
+        # Clean up partial save
+        if analysis_dir.exists():
+            try:
+                shutil.rmtree(analysis_dir)
+            except:
+                pass
+        return None
 
 def load_analysis(analysis_id):
-    """Load a saved analysis"""
+    """Load a saved analysis with error handling"""
     analysis_dir = ANALYSES_DIR / analysis_id
     if not analysis_dir.exists():
         return None
     
-    # Load valuation summary
-    with open(analysis_dir / "valuation_summary.json", 'r') as f:
-        valuation_summary = json.load(f)
-    
-    # Load results plot
-    results_plot_path = analysis_dir / "results_plot.png"
-    
-    return {
-        'valuation_summary': valuation_summary,
-        'results_plot': results_plot_path
-    }
+    try:
+        # Load valuation summary
+        summary_file = analysis_dir / "valuation_summary.json"
+        if not summary_file.exists():
+            return None
+        
+        with open(summary_file, 'r', encoding='utf-8') as f:
+            valuation_summary = json.load(f)
+        
+        # Load results plot
+        results_plot_path = analysis_dir / "results_plot.png"
+        if not results_plot_path.exists():
+            return None
+        
+        return {
+            'valuation_summary': valuation_summary,
+            'results_plot': results_plot_path
+        }
+    except Exception as e:
+        st.error(f"Error loading analysis {analysis_id}: {e}")
+        return None
 
 def delete_analysis(analysis_id):
     """Delete an analysis from disk and index"""
@@ -105,6 +193,25 @@ def delete_analysis(analysis_id):
 def display_saved_analyses():
     """Display the saved analyses organized by ticker"""
     st.header("Performed Analyses")
+    
+    # Show storage info
+    with st.expander("ℹ️ About Analysis Storage", expanded=False):
+        st.info(f"""
+        **Storage Location:** Analyses are saved to: `{ANALYSES_DIR.absolute()}`
+        
+        **Persistence:**
+        - **Local deployment:** Analyses persist across app restarts
+        - **Streamlit Cloud:** Files may be cleared after app restarts or inactivity periods
+        - **Recommendation:** Download important analyses or export data for permanent storage
+        
+        **What's Saved:**
+        - Results plot (PNG image)
+        - Valuation summary (JSON with all parameters and results)
+        - Analysis metadata (timestamp, company name, etc.)
+        """)
+    
+    # Clean up orphaned entries (analyses in index but files missing)
+    cleanup_orphaned_analyses()
     
     index = load_analyses_index()
     
@@ -141,20 +248,29 @@ def display_saved_analyses():
                 except:
                     formatted_time = timestamp_str
                 
+                # Validate files exist
+                files_exist = validate_analysis_files(analysis_id)
+                
                 col1, col2, col3 = st.columns([3, 1, 1])
                 with col1:
-                    st.write(f"**Date:** {date_str} | **Time:** {formatted_time}")
+                    status_icon = "⚠️" if not files_exist else ""
+                    st.write(f"{status_icon} **Date:** {date_str} | **Time:** {formatted_time}")
+                    if not files_exist:
+                        st.caption("⚠️ Analysis files not found (may have been cleared)")
                 with col2:
-                    if st.button("View", key=f"view_{analysis_id}"):
-                        st.session_state.selected_analysis = analysis_id
-                        st.session_state.active_tab = "Performed Analyses"
-                        # Set query param to persist tab selection
-                        st.query_params.tab = "performed"
-                        # Clear the radio button state to force it to use our index on rerun
-                        # This is critical when viewing from within a newly submitted analysis
-                        if 'tab_selector' in st.session_state:
-                            del st.session_state.tab_selector
-                        st.rerun()
+                    if files_exist:
+                        if st.button("View", key=f"view_{analysis_id}"):
+                            st.session_state.selected_analysis = analysis_id
+                            st.session_state.active_tab = "Performed Analyses"
+                            # Set query param to persist tab selection
+                            st.query_params.tab = "performed"
+                            # Clear the radio button state to force it to use our index on rerun
+                            # This is critical when viewing from within a newly submitted analysis
+                            if 'tab_selector' in st.session_state:
+                                del st.session_state.tab_selector
+                            st.rerun()
+                    else:
+                        st.caption("Unavailable")
                 with col3:
                     if st.button("🗑️ Delete", key=f"delete_{analysis_id}"):
                         st.session_state.delete_analysis_id = analysis_id
@@ -1208,6 +1324,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
