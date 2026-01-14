@@ -890,7 +890,7 @@ def create_dual_input(label, min_val, max_val, value, step, key_prefix, help_tex
     
     # Slider for dragging - syncs with text input (stacked below text input)
     slider_value = st.slider(
-        "↔️ Slider",
+        "",  # Empty label - slider is self-explanatory
         min_value=min_val,
         max_value=max_val,
         value=current_val,
@@ -1277,3 +1277,4 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
