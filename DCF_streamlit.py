@@ -471,8 +471,8 @@ if 'user_initialized' not in st.session_state:
     st.session_state.user_initialized = False
 
 # CRITICAL: Check for "Continue Anyway" action FIRST - before any other checks
-# This handles the case where user clicked "Continue Anyway" on previous run
-if st.session_state.get('continue_anyway_clicked') and st.session_state.get('continue_anyway_name'):
+# Process any pending "Continue Anyway" actions from previous runs
+if st.session_state.get('continue_anyway_name'):
     continue_name = str(st.session_state.get('continue_anyway_name')).strip()
     if continue_name:
         # Set state immediately using all methods to ensure it persists
@@ -483,15 +483,15 @@ if st.session_state.get('continue_anyway_clicked') and st.session_state.get('con
         st.session_state['user_id'] = get_user_id_from_name(continue_name)
         st.session_state.user_initialized = True
         st.session_state['user_initialized'] = True
-        # Clear the flags
-        st.session_state['continue_anyway_clicked'] = False
+        # Clear the flag
         st.session_state['continue_anyway_name'] = None
 
-# Check if user was just initialized from "Continue Anyway" button (flag-based approach)
+# Also check the flag-based approach
 if st.session_state.get('_just_initialized_user') and st.session_state.get('_pending_user_name'):
     pending_name = str(st.session_state.get('_pending_user_name')).strip()
     if pending_name:
         # Ensure state is definitely set using all methods
+        set_user_name(pending_name)
         st.session_state.user_name = pending_name
         st.session_state['user_name'] = pending_name
         st.session_state.user_id = get_user_id_from_name(pending_name)
@@ -594,35 +594,46 @@ if not user_is_initialized:
     
     # Show Continue Anyway / Choose Different buttons if warning is shown
     if showing_warning:
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            continue_btn = st.button("Continue Anyway", key="continue_existing_user")
-        with col2:
-            choose_different = st.button("Choose Different Name", key="choose_different")
-        
-        if continue_btn:
-            # Set user name directly and immediately
-            user_input_clean = warning_user_name.strip()
-            if user_input_clean:
-                # Store the action in session state - this will be processed on next rerun
-                st.session_state['continue_anyway_name'] = user_input_clean
-                st.session_state['continue_anyway_clicked'] = True
-                
-                # Also set state immediately to ensure it's available
-                set_user_name(user_input_clean)
-                st.session_state['user_name'] = user_input_clean
-                st.session_state['user_id'] = get_user_id_from_name(user_input_clean)
-                st.session_state['user_initialized'] = True
-                
-                # Set flags for the next rerun
-                st.session_state['_just_initialized_user'] = True
-                st.session_state['_pending_user_name'] = user_input_clean
-                
-                # CRITICAL: Force rerun immediately - state should be recognized
+        # Use a form to handle the "Continue Anyway" action more reliably
+        with st.form(key="continue_anyway_form"):
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                continue_submitted = st.form_submit_button("Continue Anyway", use_container_width=True)
+            with col2:
+                choose_different_btn = st.form_submit_button("Choose Different Name", use_container_width=True)
+            
+            if continue_submitted:
+                # Set user name directly and immediately
+                user_input_clean = warning_user_name.strip()
+                if user_input_clean:
+                    # Set state immediately using all methods
+                    set_user_name(user_input_clean)
+                    st.session_state.user_name = user_input_clean
+                    st.session_state['user_name'] = user_input_clean
+                    st.session_state.user_id = get_user_id_from_name(user_input_clean)
+                    st.session_state['user_id'] = get_user_id_from_name(user_input_clean)
+                    st.session_state.user_initialized = True
+                    st.session_state['user_initialized'] = True
+                    
+                    # Store flags for processing on next rerun (redundancy)
+                    st.session_state['continue_anyway_name'] = user_input_clean
+                    st.session_state['_just_initialized_user'] = True
+                    st.session_state['_pending_user_name'] = user_input_clean
+                    
+                    # Verify state is set correctly
+                    if (st.session_state.get('user_name') == user_input_clean and 
+                        st.session_state.get('user_initialized') is True):
+                        # State is set correctly - force rerun to proceed
+                        st.rerun()
+                    else:
+                        # If state wasn't set, try one more time and rerun
+                        st.session_state['user_name'] = user_input_clean
+                        st.session_state['user_id'] = get_user_id_from_name(user_input_clean)
+                        st.session_state['user_initialized'] = True
+                        st.rerun()
+            elif choose_different_btn:
+                # Just rerun to clear the warning
                 st.rerun()
-        elif choose_different:
-            # Just rerun to clear the warning
-            st.rerun()
 else:
     # User is already set, show current user info
     current_user = get_user_name()
@@ -1640,6 +1651,7 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
+
 
 
 
