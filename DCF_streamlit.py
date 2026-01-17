@@ -107,7 +107,6 @@ div.stButton > button:active{
   box-shadow: 0 10px 22px rgba(15,109,46,0.18) !important;
 }
 
-
 /* Secondary buttons:
    - Sidebar: keep light text on marine background
    - Main area: black text on light background (for View/Delete in Performed Analyses)
@@ -132,13 +131,13 @@ section.main div.stButton > button[kind="secondary"]:hover{
     unsafe_allow_html=True,
 )
 
-
 import matplotlib.pyplot as plt
 import io
 import yfinance as yf
 import json
 import os
 import shutil
+import zipfile
 import requests
 from datetime import datetime
 from pathlib import Path
@@ -346,6 +345,133 @@ def cleanup_orphaned_analyses(user_name=None):
         return True
     return False
 
+def build_user_export_zip(user_name=None):
+    """Build a ZIP export for the current user's analyses."""
+    if user_name is None:
+        user_name = get_user_name()
+    if not user_name:
+        return None, "User name is not set."
+
+    user_index = get_user_analyses_index(user_name)
+    if not user_index:
+        return None, "No analyses to export."
+
+    export_index = {}
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for ticker, analyses in user_index.items():
+            for analysis_id, analysis_info in analyses.items():
+                analysis_dir = ANALYSES_DIR / analysis_id
+                if not analysis_dir.exists():
+                    continue
+
+                # Export ALL files in the analysis directory (full backup)
+                for file_path in analysis_dir.rglob("*"):
+                    if file_path.is_file():
+                        rel_path = file_path.relative_to(analysis_dir)
+                        zf.write(file_path, arcname=f"{analysis_id}/{rel_path.as_posix()}")
+
+                export_index.setdefault(ticker, {})[analysis_id] = analysis_info
+
+        zf.writestr(
+            "analyses_index.json",
+            json.dumps(export_index, indent=2, ensure_ascii=False),
+        )
+        zf.writestr(
+            "export_meta.json",
+            json.dumps(
+                {
+                    "exported_at": datetime.now().isoformat(),
+                    "user_name": user_name,
+                    "user_key": normalize_user_key(user_name),
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+        )
+
+    buffer.seek(0)
+    filename = f"analyses_export_{normalize_user_key(user_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    return buffer.getvalue(), filename
+
+def _analysis_id_exists(index, analysis_id):
+    for ticker in index.keys():
+        if analysis_id in index[ticker]:
+            return True
+    return False
+
+def import_user_analyses_zip(uploaded_file, target_user_name=None):
+    """Import analyses from a ZIP export into the current user."""
+    if target_user_name is None:
+        target_user_name = get_user_name()
+    if not target_user_name:
+        return 0, 0, "User name is not set."
+
+    user_key = normalize_user_key(target_user_name)
+    if not user_key:
+        return 0, 0, "Invalid user name."
+
+    try:
+        data = uploaded_file.read()
+        buffer = io.BytesIO(data)
+        with zipfile.ZipFile(buffer, "r") as zf:
+            if "analyses_index.json" not in zf.namelist():
+                return 0, 0, "Invalid ZIP: missing analyses_index.json"
+
+            imported_index = json.loads(zf.read("analyses_index.json").decode("utf-8"))
+            current_index = load_analyses_index()
+
+            imported_count = 0
+            skipped_count = 0
+
+            for ticker, analyses in imported_index.items():
+                for analysis_id, analysis_info in analyses.items():
+                    # Ensure unique analysis_id
+                    new_id = analysis_id
+                    if _analysis_id_exists(current_index, new_id):
+                        suffix = 1
+                        while _analysis_id_exists(current_index, f"{analysis_id}_imported_{suffix}"):
+                            suffix += 1
+                        new_id = f"{analysis_id}_imported_{suffix}"
+
+                    # Extract files
+                    prefix = f"{analysis_id}/"
+                    files = [n for n in zf.namelist() if n.startswith(prefix)]
+                    if not files:
+                        skipped_count += 1
+                        continue
+
+                    dest_dir = ANALYSES_DIR / new_id
+                    dest_dir.mkdir(exist_ok=True, parents=True)
+
+                    for name in files:
+                        rel_name = name[len(prefix):]
+                        if not rel_name:
+                            continue
+                        dest_path = dest_dir / rel_name
+                        dest_path.parent.mkdir(parents=True, exist_ok=True)
+                        with zf.open(name) as src, open(dest_path, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+
+                    # Update index entry with current user info and new path/id
+                    analysis_info = dict(analysis_info)
+                    analysis_info["analysis_id"] = new_id
+                    analysis_info["path"] = str(dest_dir.absolute())
+                    analysis_info["user_name"] = target_user_name
+                    analysis_info["user_key"] = user_key
+                    analysis_info["user_id"] = get_user_id_from_name(user_key)
+
+                    current_index.setdefault(ticker, {})[new_id] = analysis_info
+                    imported_count += 1
+
+            if imported_count > 0:
+                save_analyses_index(current_index)
+
+            return imported_count, skipped_count, None
+    except Exception as e:
+        return 0, 0, f"Import failed: {e}"
+
 def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribution_only, fig_sensitivity):
     """Save an analysis to disk with error handling"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -498,6 +624,39 @@ def display_saved_analyses():
         - Valuation summary (JSON with all parameters and results)
         - Analysis metadata (timestamp, company name, user name, etc.)
         """)
+
+    with st.expander("⬇️ Export / Import Analyses (Full Backup)", expanded=False):
+        export_bytes, export_name = build_user_export_zip()
+        if export_bytes:
+            st.download_button(
+                "Download ZIP",
+                data=export_bytes,
+                file_name=export_name,
+                mime="application/zip",
+            )
+        else:
+            st.info("No analyses to export for this user.")
+
+        uploaded = st.file_uploader(
+            "Import analyses ZIP",
+            type=["zip"],
+            key="analyses_zip_import",
+            help="Upload a ZIP exported from this app to restore analyses and keep your history.",
+        )
+        if st.button("Import ZIP", key="import_zip_btn"):
+            if not uploaded:
+                st.error("Please choose a ZIP file to import.")
+            else:
+                with st.spinner("Importing analyses..."):
+                    imported, skipped, err = import_user_analyses_zip(uploaded, get_user_name())
+                if err:
+                    st.error(err)
+                else:
+                    msg = f"✅ Imported {imported} analyses."
+                    if skipped > 0:
+                        msg += f" Skipped {skipped} entries with missing files."
+                    st.success(msg)
+                    st.rerun()
     
     # Clean up orphaned entries (analyses in index but files missing) for current user
     cleanup_orphaned_analyses()
@@ -524,10 +683,15 @@ def display_saved_analyses():
         del st.session_state.delete_analysis_id
         st.rerun()
     
-    # Display analyses organized by ticker with View and Delete buttons
-    for ticker in sorted(index.keys()):
+    # Display analyses organized by company name (sorted) with View and Delete buttons
+    ticker_entries = []
+    for ticker, analyses in index.items():
+        first_info = next(iter(analyses.values()))
+        company_name = first_info.get("company_name", ticker)
+        ticker_entries.append((company_name, ticker))
+
+    for company_name, ticker in sorted(ticker_entries, key=lambda x: x[0].casefold()):
         analyses = index[ticker]
-        company_name = list(analyses.values())[0]['company_name']
         
         with st.expander(f"📊 {ticker} - {company_name} ({len(analyses)} {'analyses' if len(analyses) > 1 else 'analysis'})"):
             # Sort analyses by timestamp (newest first)
@@ -1497,9 +1661,7 @@ with st.sidebar.form("input_form"):
         std_reinv_5_10y = st.number_input("Std Reinv 5-10y (%)", min_value=0.0, max_value=20.0, value=5.0, step=0.1)
 
     n_simulations = st.number_input("Simulations", min_value=1000, max_value=100000, value=10000, step=1000)
-    st.markdown('<div class="run-sim-btn">', unsafe_allow_html=True)
     submitted = st.form_submit_button("Run Simulation")
-    st.markdown("</div>", unsafe_allow_html=True)
 
 # If an analysis is selected for viewing, force to else block for proper tab handling
 # This ensures consistent behavior whether coming from a new analysis or directly
@@ -1704,8 +1866,6 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
-
-
 
 
 
