@@ -13,26 +13,30 @@ from typing import Dict, Optional
 # ---------------------------------------------------------------------------
 # Damodaran DCF template import (Google Sheets / Excel)
 # ---------------------------------------------------------------------------
-# Reads each input by matching the LABEL TEXT in column A (not a fixed row
-# number), so it survives rows being inserted/deleted/reordered in a given
-# company tab — as long as the label text itself isn't renamed. Matching is
-# accent-insensitive, case-insensitive, substring-based, and takes the FIRST
-# matching row top-to-bottom (relevant for "Precio de mercado actual", which
-# appears both as the input and again as a later reference/output).
+# Reads each input by matching LABEL TEXT in column A (not a fixed row
+# number), so it survives rows being inserted/deleted/reordered — as long as
+# some recognizable label text remains. Each field lists several candidate
+# phrasings (most specific/preferred first); the first candidate that finds
+# a match anywhere in the tab wins. This also survives labels being
+# reworded (e.g. "EBIT (con I+D capitalizado) - base del modelo" shortened
+# to just "EBIT (con I+D capitalizado)", or "Acciones en circulacion..."
+# rewritten in English as "Shares Outstanding"), as long as one of the
+# listed variants still appears. Matching is accent-insensitive and
+# case-insensitive.
 LABEL_MAP = {
-    "risk_free_rate": "tasa libre de riesgo (rf)",
-    "equity_risk_premium": "prima de riesgo (erp)",
-    "tax_rate": "tasa impositiva (usada",
-    "debt": "deuda total - debt (valor contable)",
-    "WACC": "cost of capital (wacc)",
-    "shares": "acciones en circulacion, diluidas (m)",
-    "price": "precio de mercado actual",
-    "ebit": "ebit (con i+d capitalizado) - base del modelo",
-    "cash": "caja y equivalentes (+ inversiones corto plazo)",
-    "growth_rate_5y": "growth 5y - crecimiento nopat, anos 1-5",
-    "growth_rate_5_10y": "growth 5-10y - crecimiento nopat, anos 6-10",
-    "reinvestment_rate_5y": "reinvestment 5y - tasa de reinversion, anos 1-5",
-    "reinvestment_rate_5_10y": "reinvestment 5-10y - tasa de reinversion, anos 6-10",
+    "risk_free_rate": ["tasa libre de riesgo (rf)", "risk free rate"],
+    "equity_risk_premium": ["prima de riesgo (erp)", "equity risk premium"],
+    "tax_rate": ["tasa impositiva (usada", "tasa impositiva", "tax rate"],
+    "debt": ["deuda total - debt", "deuda total", "total debt"],
+    "WACC": ["cost of capital (wacc)", "wacc"],
+    "shares": ["acciones en circulacion, diluidas", "shares outstanding", "acciones en circulacion"],
+    "price": ["precio de mercado actual", "precio actual", "current price", "precio"],
+    "ebit": ["ebit (con i+d capitalizado)", "operating income base", "ebit ajustado", "operating income"],
+    "cash": ["caja y equivalentes", "cash and equivalents", "cash"],
+    "growth_rate_5y": ["growth 5y - crecimiento nopat, anos 1-5", "growth 5y"],
+    "growth_rate_5_10y": ["growth 5-10y - crecimiento nopat, anos 6-10", "growth 5-10y"],
+    "reinvestment_rate_5y": ["reinvestment 5y - tasa de reinversion, anos 1-5", "reinvestment 5y"],
+    "reinvestment_rate_5_10y": ["reinvestment 5-10y - tasa de reinversion, anos 6-10", "reinvestment 5-10y"],
 }
 # These fields are stored as fractions in the template (e.g. 0.135 = 13.5%)
 # and must be converted to the app's percentage-point convention (13.5).
@@ -79,9 +83,11 @@ def _normalize(s) -> str:
 
 
 def _clean_numeric(raw) -> Optional[float]:
-    """Parses a cell value that may be formatted as '13.50%', '1,234.5',
-    '3,720 m' (unit suffix), or a plain number. Returns None if no number
-    can be found in it at all."""
+    """Parses a cell value that may be formatted US-style ('1,499.60'),
+    European-style ('1.499,60'), with a unit suffix ('3.720 m', '581.833 m'),
+    a currency symbol, or a percentage. Auto-detects which of ',' / '.' is
+    the decimal separator vs. the thousands separator. Returns None if no
+    number can be found in it at all."""
     if raw is None:
         return None
     if isinstance(raw, (int, float)) and not (isinstance(raw, float) and pd.isna(raw)):
@@ -92,12 +98,32 @@ def _clean_numeric(raw) -> Optional[float]:
     was_percent = "%" in s
     # Grab the first number-looking token and ignore anything around it
     # (currency symbols, unit suffixes like ' m'/' EUR millones', etc.)
-    m = re.search(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?", s)
+    m = re.search(r"-?[\d.,]+", s)
     if not m:
         return None
-    s = m.group(0).replace(",", "")
+    token = m.group(0)
+    has_comma, has_dot = "," in token, "." in token
+
+    if has_comma and has_dot:
+        # Whichever separator appears LAST is the decimal point.
+        if token.rfind(",") > token.rfind("."):
+            token = token.replace(".", "").replace(",", ".")   # European: 1.499,60
+        else:
+            token = token.replace(",", "")                      # US: 1,499.60
+    elif has_comma:
+        parts = token.split(",")
+        if len(parts) == 2 and len(parts[-1]) in (1, 2):
+            token = token.replace(",", ".")   # decimal comma: 388,15
+        else:
+            token = token.replace(",", "")    # thousands comma(s): 3,720 / 1,234,567
+    elif has_dot:
+        parts = token.split(".")
+        if not (len(parts) == 2 and len(parts[-1]) in (1, 2)):
+            token = token.replace(".", "")    # thousands dot(s): 581.833 / 1.234.567
+        # else: already a plain decimal point, e.g. 3.15 / 1499.60 -> leave as-is
+
     try:
-        val = float(s)
+        val = float(token)
     except ValueError:
         return None
     return val / 100.0 if was_percent else val
@@ -114,15 +140,25 @@ def _find_row_by_label(column_a_values, label_substring: str) -> Optional[int]:
     return None
 
 
+def _find_row_by_candidates(column_a_values, candidates) -> Optional[int]:
+    """Tries each candidate label (most specific/preferred first) and
+    returns the row for the first one that matches anywhere in the tab."""
+    for label in candidates:
+        row_idx = _find_row_by_label(column_a_values, label)
+        if row_idx is not None:
+            return row_idx
+    return None
+
+
 def _grid_to_app_values(column_a_values, get_col_b) -> Dict:
     """Shared logic: given the full column-A text (for label search) and a
     function get_col_b(row_index_0based) -> raw column-B value, builds the
-    dict of app-ready values by matching each field's label text."""
+    dict of app-ready values by matching each field's candidate labels."""
     data = {}
     missing_fields = []
     for key in APP_FIELDS:
-        label = LABEL_MAP.get(key)
-        row_idx = _find_row_by_label(column_a_values, label) if label else None
+        candidates = LABEL_MAP.get(key, [])
+        row_idx = _find_row_by_candidates(column_a_values, candidates)
         raw = get_col_b(row_idx) if row_idx is not None else None
         val = _clean_numeric(raw)
         if val is None:
