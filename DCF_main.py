@@ -3,6 +3,7 @@ import sys
 import re
 import numpy as np
 import pandas as pd
+import requests
 import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
 from datetime import datetime
@@ -52,6 +53,21 @@ def extract_sheet_id(url_or_id: str) -> str:
     the input unchanged if it's already a bare ID."""
     m = re.search(r"/d/([a-zA-Z0-9_-]+)", url_or_id)
     return m.group(1) if m else url_or_id.strip()
+
+
+def extract_gid(url_or_id: str) -> Optional[str]:
+    """Pulls the gid (numeric tab ID) out of a Google Sheets URL, if present
+    (e.g. '...edit?gid=525146236#gid=525146236' -> '525146236'). Returns
+    None for a bare spreadsheet ID with no gid."""
+    m = re.search(r"[?&#]gid=(\d+)", url_or_id)
+    return m.group(1) if m else None
+
+
+def _looks_like_html(text: str) -> bool:
+    """Cheap check for 'this is a login/error page, not CSV' — happens when
+    the sheet isn't actually shared as 'Anyone with the link can view'."""
+    head = text[:300].lower()
+    return "<html" in head or "<!doctype html" in head or "accounts.google.com" in head
 
 
 def _normalize(s) -> str:
@@ -118,11 +134,37 @@ def fetch_from_google_sheet(sheet_url: str, tab_name: str) -> Dict:
     shared as 'Anyone with the link can view'). Matches inputs by their
     label text in column A, so it's robust to rows being inserted, deleted,
     or reordered relative to the original template.
+
+    Prefers the gid embedded in the pasted URL (e.g. '...?gid=525146236'),
+    since that's unambiguous — the ASML tab, say, might not be the first
+    sheet in the workbook (gid=0), and asking Google for a tab 'by name'
+    can silently fall back to the wrong sheet. Falls back to a by-name
+    request only if the URL has no gid.
     """
     sheet_id = extract_sheet_id(sheet_url)
-    tab_encoded = tab_name.replace(" ", "%20")
-    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={tab_encoded}"
-    df = pd.read_csv(csv_url, header=None)
+    gid = extract_gid(sheet_url)
+
+    if gid:
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+    else:
+        tab_encoded = tab_name.replace(" ", "%20")
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={tab_encoded}"
+
+    try:
+        text = requests.get(csv_url, timeout=15).text
+    except Exception as e:
+        raise RuntimeError(f"Could not reach Google Sheets ({e}).")
+
+    if _looks_like_html(text):
+        raise RuntimeError(
+            "Google returned a login/permission page instead of the sheet data. "
+            "The spreadsheet must be shared as 'Anyone with the link' -> 'Viewer' "
+            "(Share button, top-right in Google Sheets). If it's private, use the "
+            "'Uploaded Excel file (.xlsx)' option instead."
+        )
+
+    from io import StringIO
+    df = pd.read_csv(StringIO(text), header=None)
     column_a = df.iloc[:, 0].tolist() if df.shape[1] > 0 else []
 
     def get_col_b(row_idx):
@@ -131,7 +173,19 @@ def fetch_from_google_sheet(sheet_url: str, tab_name: str) -> Dict:
         except (IndexError, KeyError):
             return None
 
-    return _grid_to_app_values(column_a, get_col_b)
+    result = _grid_to_app_values(column_a, get_col_b)
+
+    # Sanity check: if we used a gid (unambiguous tab) but almost nothing
+    # matched, the gid probably points at a tab that isn't built from this
+    # template at all — surface that clearly instead of a vague field list.
+    if gid and len(result.get("_missing_fields", [])) >= len(APP_FIELDS) - 1:
+        raise RuntimeError(
+            f"Tab at gid={gid} doesn't look like a Damodaran DCF template tab "
+            f"(only found {len(APP_FIELDS) - len(result['_missing_fields'])}/{len(APP_FIELDS)} expected labels). "
+            "Double-check you're pasting the link to the right tab (open that company's "
+            "tab in the browser first, then copy the URL — it should end in '...&gid=<number>')."
+        )
+    return result
 
 
 def fetch_from_excel_template(file_like, tab_name: str) -> Dict:
