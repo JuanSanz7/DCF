@@ -1599,43 +1599,54 @@ with st.sidebar:
 
     if st.button("Fetch from Sheet / Excel"):
         if not gsheet_tab:
-            st.error("❌ Please enter the tab name to read (must match the company's tab exactly).")
+            st.session_state["gsheet_import_msg"] = ("error", "❌ Please enter the tab name to read (must match the company's tab exactly).")
         else:
             with st.spinner(f"Reading '{gsheet_tab}'..."):
                 try:
                     if gsheet_source == "Public Google Sheet (no credentials)":
                         if not gsheet_url:
-                            st.error("❌ Please paste a Google Sheets link or spreadsheet ID.")
+                            st.session_state["gsheet_import_msg"] = ("error", "❌ Please paste a Google Sheets link or spreadsheet ID.")
                             res = None
                         else:
                             res = fetch_from_google_sheet(gsheet_url, gsheet_tab)
                     else:
                         if uploaded_xlsx is None:
-                            st.error("❌ Please upload the .xlsx workbook first.")
+                            st.session_state["gsheet_import_msg"] = ("error", "❌ Please upload the .xlsx workbook first.")
                             res = None
                         else:
                             res = fetch_from_excel_template(uploaded_xlsx, gsheet_tab)
 
                     if res and res.get("_read_ok"):
-                        st.session_state.st_vals.update({k: v for k, v in res.items() if not k.startswith("_")})
+                        imported = {k: v for k, v in res.items() if not k.startswith("_")}
+                        st.session_state.st_vals.update(imported)
                         st.session_state.selected_ticker = f"{gsheet_tab} - (imported from template)"
                         missing = res.get("_missing_fields", [])
+                        imported_list = ", ".join(sorted(imported.keys())) if imported else "none"
                         if missing:
-                            st.warning(
-                                f"⚠️ Imported '{gsheet_tab}', but couldn't read: {', '.join(missing)}. "
-                                "Check the tab name and that the template layout wasn't modified."
+                            st.session_state["gsheet_import_msg"] = (
+                                "warning",
+                                f"⚠️ Imported '{gsheet_tab}' — got {len(imported)}/{len(imported) + len(missing)} fields. "
+                                f"Could NOT read: {', '.join(missing)}. Successfully read: {imported_list}. "
+                                "Check that those labels still exist in column A of that tab (unchanged text)."
                             )
                         else:
-                            st.success(f"✅ All fields imported from tab '{gsheet_tab}'.")
+                            st.session_state["gsheet_import_msg"] = ("success", f"✅ All {len(imported)} fields imported from tab '{gsheet_tab}': {imported_list}.")
                         st.rerun()
                     elif res is not None:
-                        st.error(f"❌ Tab '{gsheet_tab}' was found but no values could be parsed. Check the layout.")
+                        st.session_state["gsheet_import_msg"] = ("error", f"❌ Tab '{gsheet_tab}' was found but no values could be parsed. Check the layout.")
                 except Exception as e:
-                    st.error(f"❌ Error reading '{gsheet_tab}': {str(e)}")
-                    st.info(
+                    st.session_state["gsheet_import_msg"] = (
+                        "error",
+                        f"❌ Error reading '{gsheet_tab}': {str(e)}\n\n"
                         "💡 Tip: for a Google Sheet, the tab must be shared as 'Anyone with the link can view'. "
                         "For a private sheet, use the Excel upload option instead."
                     )
+
+    # Render the last import result every run, so it survives the st.rerun() above
+    # (a message shown right before st.rerun() would otherwise flash and vanish).
+    if "gsheet_import_msg" in st.session_state:
+        level, msg = st.session_state["gsheet_import_msg"]
+        getattr(st, level)(msg)
 
 with st.sidebar.form("input_form"):
     # Check if user is set
