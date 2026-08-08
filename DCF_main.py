@@ -12,29 +12,26 @@ from typing import Dict, Optional
 # ---------------------------------------------------------------------------
 # Damodaran DCF template import (Google Sheets / Excel)
 # ---------------------------------------------------------------------------
-# Maps each Monte Carlo input to its row (1-indexed, column B) in the
-# single-tab Damodaran DCF template (Sections 1-5: WACC & CAPM, R&D
-# capitalization, growth & reinvestment assumptions). Every company tab in
-# the template shares this exact row layout, so a single map works for all
-# of them. If the template layout is ever edited (rows inserted/removed),
-# update these row numbers to match — or better, switch the template to
-# Named Ranges and adapt these two functions to read by name instead.
-TEMPLATE_ROW_MAP = {
-    "risk_free_rate": 12,          # Tasa libre de riesgo (Rf)        -> stored as fraction, e.g. 0.0315
-    "equity_risk_premium": 13,     # Prima de riesgo (ERP)
-    "beta": 14,                    # Beta (informational, not a Monte Carlo input)
-    "tax_rate": 19,                # Tasa impositiva
-    "market_cap": 21,              # Capitalizacion bursatil - MC
-    "debt": 22,                    # Deuda total - Debt
-    "WACC": 26,                    # COST OF CAPITAL (WACC)
-    "shares": 27,                  # Acciones en circulacion, diluidas (m)
-    "price": 28,                   # Precio de mercado actual
-    "ebit": 43,                    # EBIT (con I+D capitalizado) - base del modelo
-    "cash": 48,                    # Caja y equivalentes
-    "growth_rate_5y": 61,          # Growth 5y
-    "growth_rate_5_10y": 62,       # Growth 5-10y
-    "reinvestment_rate_5y": 63,    # Reinvestment 5y
-    "reinvestment_rate_5_10y": 64, # Reinvestment 5-10y
+# Reads each input by matching the LABEL TEXT in column A (not a fixed row
+# number), so it survives rows being inserted/deleted/reordered in a given
+# company tab — as long as the label text itself isn't renamed. Matching is
+# accent-insensitive, case-insensitive, substring-based, and takes the FIRST
+# matching row top-to-bottom (relevant for "Precio de mercado actual", which
+# appears both as the input and again as a later reference/output).
+LABEL_MAP = {
+    "risk_free_rate": "tasa libre de riesgo (rf)",
+    "equity_risk_premium": "prima de riesgo (erp)",
+    "tax_rate": "tasa impositiva (usada",
+    "debt": "deuda total - debt (valor contable)",
+    "WACC": "cost of capital (wacc)",
+    "shares": "acciones en circulacion, diluidas (m)",
+    "price": "precio de mercado actual",
+    "ebit": "ebit (con i+d capitalizado) - base del modelo",
+    "cash": "caja y equivalentes (+ inversiones corto plazo)",
+    "growth_rate_5y": "growth 5y - crecimiento nopat, anos 1-5",
+    "growth_rate_5_10y": "growth 5-10y - crecimiento nopat, anos 6-10",
+    "reinvestment_rate_5y": "reinvestment 5y - tasa de reinversion, anos 1-5",
+    "reinvestment_rate_5_10y": "reinvestment 5-10y - tasa de reinversion, anos 6-10",
 }
 # These fields are stored as fractions in the template (e.g. 0.135 = 13.5%)
 # and must be converted to the app's percentage-point convention (13.5).
@@ -57,6 +54,14 @@ def extract_sheet_id(url_or_id: str) -> str:
     return m.group(1) if m else url_or_id.strip()
 
 
+def _normalize(s) -> str:
+    """Lowercases and strips accents, so 'Año' / 'Ano' / 'AÑO' all match."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(s))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.lower().strip()
+
+
 def _clean_numeric(raw) -> Optional[float]:
     """Parses a cell value that may be formatted as '13.50%', '1,234.5', or
     a plain number. Returns None if it can't be parsed."""
@@ -76,14 +81,27 @@ def _clean_numeric(raw) -> Optional[float]:
     return val / 100.0 if was_percent else val
 
 
-def _grid_to_app_values(grid_lookup) -> Dict:
-    """Shared logic: given a function that returns the raw cell value for
-    (row_1indexed, col_letter='B'), builds the dict of app-ready values."""
+def _find_row_by_label(column_a_values, label_substring: str) -> Optional[int]:
+    """Returns the 0-indexed position of the first cell in column_a_values
+    whose normalized text contains label_substring (already normalized)."""
+    for i, cell in enumerate(column_a_values):
+        if cell is None:
+            continue
+        if label_substring in _normalize(cell):
+            return i
+    return None
+
+
+def _grid_to_app_values(column_a_values, get_col_b) -> Dict:
+    """Shared logic: given the full column-A text (for label search) and a
+    function get_col_b(row_index_0based) -> raw column-B value, builds the
+    dict of app-ready values by matching each field's label text."""
     data = {}
     missing_fields = []
     for key in APP_FIELDS:
-        row = TEMPLATE_ROW_MAP.get(key)
-        raw = grid_lookup(row) if row else None
+        label = LABEL_MAP.get(key)
+        row_idx = _find_row_by_label(column_a_values, label) if label else None
+        raw = get_col_b(row_idx) if row_idx is not None else None
         val = _clean_numeric(raw)
         if val is None:
             missing_fields.append(key)
@@ -97,40 +115,43 @@ def _grid_to_app_values(grid_lookup) -> Dict:
 def fetch_from_google_sheet(sheet_url: str, tab_name: str) -> Dict:
     """Reads a company tab from a PUBLIC Google Sheet built from the
     Damodaran DCF template (no credentials required — the tab must be
-    shared as 'Anyone with the link can view'). Returns a dict with the
-    13 inputs the Monte Carlo engine needs, ready to plug into either UI.
+    shared as 'Anyone with the link can view'). Matches inputs by their
+    label text in column A, so it's robust to rows being inserted, deleted,
+    or reordered relative to the original template.
     """
     sheet_id = extract_sheet_id(sheet_url)
     tab_encoded = tab_name.replace(" ", "%20")
     csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={tab_encoded}"
     df = pd.read_csv(csv_url, header=None)
+    column_a = df.iloc[:, 0].tolist() if df.shape[1] > 0 else []
 
-    def grid_lookup(row_1indexed, col_letter="B"):
-        col_idx = ord(col_letter.upper()) - ord("A")
+    def get_col_b(row_idx):
         try:
-            return df.iloc[row_1indexed - 1, col_idx]
+            return df.iloc[row_idx, 1] if df.shape[1] > 1 else None
         except (IndexError, KeyError):
             return None
 
-    return _grid_to_app_values(grid_lookup)
+    return _grid_to_app_values(column_a, get_col_b)
 
 
 def fetch_from_excel_template(file_like, tab_name: str) -> Dict:
     """Reads a company tab from a .xlsx workbook built from the Damodaran
     DCF template (use this for private workbooks — no sharing settings
     needed). `file_like` is a file path or a file-like object, e.g.
-    Streamlit's UploadedFile from st.file_uploader.
+    Streamlit's UploadedFile from st.file_uploader. Matches inputs by their
+    label text in column A, same as fetch_from_google_sheet.
     """
     import openpyxl
     wb = openpyxl.load_workbook(file_like, data_only=True)
     if tab_name not in wb.sheetnames:
         raise ValueError(f"Tab '{tab_name}' not found. Available tabs: {', '.join(wb.sheetnames)}")
     ws = wb[tab_name]
+    column_a = [ws.cell(row=r, column=1).value for r in range(1, ws.max_row + 1)]
 
-    def grid_lookup(row_1indexed, col_letter="B"):
-        return ws[f"{col_letter}{row_1indexed}"].value
+    def get_col_b(row_idx):
+        return ws.cell(row=row_idx + 1, column=2).value
 
-    return _grid_to_app_values(grid_lookup)
+    return _grid_to_app_values(column_a, get_col_b)
 
 
 # ---------------------------------------------------------------------------
