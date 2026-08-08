@@ -1947,17 +1947,3 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
