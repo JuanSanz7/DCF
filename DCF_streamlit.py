@@ -1,1066 +1,1948 @@
-# TEST COMMENT - Please ignore. This is to test file edit functionality.
-import yfinance as yf
-import pandas as pd
-import matplotlib.pyplot as plt
-from datetime import datetime
-import numpy as np
-import logging
-from functools import lru_cache
-import time
-from typing import Dict, List, Optional
-import os
-import re
-import smtplib
-from email.message import EmailMessage
-from configparser import ConfigParser
-from email.utils import make_msgid
-import matplotlib.dates as mdates
+# IMPORTANT: st.set_page_config must be the first Streamlit command
+import streamlit as st
+st.set_page_config(page_title="Intrinsic Valuation Tool. DCF Monte Carlo Simulation", layout="wide")
 
-# ---------------------------------------------------------------------------
-# Damodaran DCF template import (Google Sheets / Excel)
-# ---------------------------------------------------------------------------
-# Maps each DCF Monte Carlo input to its row (1-indexed, column B) in the
-# single-tab Damodaran DCF template (Sections 1-5: WACC & CAPM, R&D
-# capitalization, growth & reinvestment assumptions). Every company tab in
-# the template shares this exact row layout, so a single map works for all
-# of them. If the template layout is ever edited (rows inserted/removed),
-# update these row numbers to match — or better, switch the template to
-# Named Ranges and adapt these two functions to read by name instead.
-TEMPLATE_ROW_MAP = {
-    "risk_free_rate": 12,       # Tasa libre de riesgo (Rf)          -> stored as %, e.g. 0.0315
-    "equity_risk_premium": 13,  # Prima de riesgo (ERP)
-    "beta": 14,                 # Beta (informational, not a Monte Carlo input)
-    "tax_rate": 19,             # Tasa impositiva
-    "market_cap": 21,           # Capitalizacion bursatil - MC
-    "debt": 22,                 # Deuda total - Debt
-    "WACC": 26,                 # COST OF CAPITAL (WACC)
-    "shares": 27,                # Acciones en circulacion, diluidas (m)
-    "price": 28,                 # Precio de mercado actual
-    "ebit": 43,                  # EBIT (con I+D capitalizado) - base del modelo
-    "cash": 48,                  # Caja y equivalentes
-    "growth_rate_5y": 61,        # Growth 5y
-    "growth_rate_5_10y": 62,     # Growth 5-10y
-    "reinvestment_rate_5y": 63,  # Reinvestment 5y
-    "reinvestment_rate_5_10y": 64,  # Reinvestment 5-10y
-}
-# These fields are stored as fractions in the template (e.g. 0.135 = 13.5%)
-# and must be converted to the app's percentage-point convention (13.5).
-_PERCENT_FIELDS = {
-    "risk_free_rate", "equity_risk_premium", "tax_rate", "WACC",
-    "growth_rate_5y", "growth_rate_5_10y", "reinvestment_rate_5y", "reinvestment_rate_5_10y",
-}
-# Fields the app actually consumes (everything else in the map is read but ignored)
-_APP_FIELDS = [
-    "price", "shares", "cash", "ebit", "debt", "tax_rate",
-    "growth_rate_5y", "growth_rate_5_10y", "risk_free_rate", "equity_risk_premium",
-    "WACC", "reinvestment_rate_5y", "reinvestment_rate_5_10y",
-]
-
-
-def extract_sheet_id(url_or_id: str) -> str:
-    """Pulls the spreadsheet ID out of a full Google Sheets URL, or returns
-    the input unchanged if it's already a bare ID."""
-    m = re.search(r"/d/([a-zA-Z0-9_-]+)", url_or_id)
-    return m.group(1) if m else url_or_id.strip()
-
-
-def _clean_numeric(raw) -> Optional[float]:
-    """Parses a cell value that may be formatted as '13.50%', '1,234.5', or
-    a plain number. Returns None if it can't be parsed."""
-    if raw is None:
-        return None
-    if isinstance(raw, (int, float)) and not (isinstance(raw, float) and pd.isna(raw)):
-        return float(raw)
-    s = str(raw).strip()
-    if not s or s.lower() == "nan":
-        return None
-    was_percent = s.endswith("%")
-    s = s.replace("%", "").replace(",", "").replace("€", "").replace("$", "").strip()
-    try:
-        val = float(s)
-    except ValueError:
-        return None
-    return val / 100.0 if was_percent else val
-
-
-def _grid_to_app_values(grid_lookup) -> Dict:
-    """Shared logic: given a function that returns the raw cell value for
-    (row_1indexed, col_letter='B'), builds the dict of app-ready values."""
-    data = {}
-    missing_fields = []
-    for key in _APP_FIELDS:
-        row = TEMPLATE_ROW_MAP.get(key)
-        raw = grid_lookup(row) if row else None
-        val = _clean_numeric(raw)
-        if val is None:
-            missing_fields.append(key)
-            continue
-        data[key] = val * 100.0 if key in _PERCENT_FIELDS else val
-    data["_read_ok"] = True
-    data["_missing_fields"] = missing_fields
-    return data
-
-
-def fetch_from_google_sheet(sheet_url: str, tab_name: str) -> Dict:
-    """Reads a company tab from a PUBLIC Google Sheet built from the
-    Damodaran DCF template (no credentials required — the tab must be
-    shared as 'Anyone with the link can view'). Returns a dict compatible
-    with st.session_state.st_vals in DCF_streamlit.py.
+st.markdown(
     """
-    sheet_id = extract_sheet_id(sheet_url)
-    tab_encoded = tab_name.replace(" ", "%20")
-    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={tab_encoded}"
-    df = pd.read_csv(csv_url, header=None)
+<style>
+/* ------------------------------
+   Modern theme (sidebar + buttons)
+   ------------------------------ */
+:root{
+  --marine-900: #06283a;   /* deep marine */
+  --marine-800: #0b344a;   /* sidebar surface */
+  --marine-700: #0f415c;   /* widget surface */
+  --accent-500: #12b3d6;   /* filled buttons */
+  --accent-600: #0fa3c4;   /* hover */
+  --text-on-marine: #eaf6ff;
+  --muted-on-marine: rgba(234,246,255,0.75);
+  --radius: 12px;
+}
 
-    def grid_lookup(row_1indexed, col_letter="B"):
-        col_idx = ord(col_letter.upper()) - ord("A")
-        try:
-            return df.iloc[row_1indexed - 1, col_idx]
-        except (IndexError, KeyError):
-            return None
+/* Sidebar background */
+[data-testid="stSidebar"]{
+  background: linear-gradient(180deg, var(--marine-800) 0%, var(--marine-900) 100%) !important;
+}
+[data-testid="stSidebar"] *{
+  color: var(--text-on-marine);
+}
 
-    return _grid_to_app_values(grid_lookup)
+/* Sidebar section spacing */
+[data-testid="stSidebar"] .block-container{
+  padding-top: 1rem;
+}
 
+/* Inputs inside sidebar */
+[data-testid="stSidebar"] input,
+[data-testid="stSidebar"] textarea{
+  background: #ffffff !important;
+  border: 1px solid rgba(0,0,0,0.12) !important;
+  color: #000000 !important;
+  border-radius: var(--radius) !important;
+}
+[data-testid="stSidebar"] input::placeholder,
+[data-testid="stSidebar"] textarea::placeholder{
+  color: rgba(0,0,0,0.55) !important;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] > div{
+  background: #ffffff !important;
+  border: 1px solid rgba(0,0,0,0.12) !important;
+  border-radius: var(--radius) !important;
+}
+[data-testid="stSidebar"] [data-baseweb="select"] *{
+  color: #000000 !important;
+}
+[data-testid="stSidebar"] label{
+  color: var(--muted-on-marine) !important;
+}
 
-def fetch_from_excel_template(file_like, tab_name: str) -> Dict:
-    """Reads a company tab from an uploaded .xlsx workbook built from the
-    Damodaran DCF template (use this for private workbooks — no sharing
-    settings needed). `file_like` is a file path or a file-like object,
-    e.g. Streamlit's UploadedFile from st.file_uploader.
-    """
-    import openpyxl
-    wb = openpyxl.load_workbook(file_like, data_only=True)
-    if tab_name not in wb.sheetnames:
-        raise ValueError(f"Tab '{tab_name}' not found. Available tabs: {', '.join(wb.sheetnames)}")
-    ws = wb[tab_name]
+/* Slider colors */
+[data-testid="stSidebar"] [data-baseweb="slider"] [role="slider"]{
+  background-color: var(--accent-500) !important;
+}
 
-    def grid_lookup(row_1indexed, col_letter="B"):
-        return ws[f"{col_letter}{row_1indexed}"].value
+/* Filled buttons (global) */
+div.stButton > button{
+  background: var(--accent-500) !important;
+  color: #05212f !important;
+  border: 0 !important;
+  border-radius: var(--radius) !important;
+  padding: 0.6rem 1.05rem !important;
+  font-weight: 700 !important;
+  box-shadow: 0 10px 22px rgba(18,179,214,0.18) !important;
+}
+div.stButton > button:hover{
+  background: var(--accent-600) !important;
+  transform: translateY(-1px);
+}
+div.stButton > button:active{
+  transform: translateY(0px);
+}
 
-    return _grid_to_app_values(grid_lookup)
+/* Run Simulation button (green) — the only form submit in the sidebar */
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button{
+  background: #16a34a !important; /* green */
+  color: #ffffff !important;
+  border: 0 !important;
+  border-radius: var(--radius) !important;
+  padding: 0.6rem 1.05rem !important;
+  font-weight: 800 !important;
+  box-shadow: 0 10px 22px rgba(22,163,74,0.20) !important;
+}
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button:hover{
+  background: #15803d !important;
+  transform: translateY(-1px);
+}
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button:active{
+  transform: translateY(0px);
+}
+/* Ensure disabled/greyed state is still readable */
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button:disabled,
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button[disabled],
+[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button[aria-disabled="true"]{
+  background: #0f6d2e !important; /* dark green */
+  color: #ffffff !important;
+  opacity: 1 !important;
+  filter: none !important;
+  box-shadow: 0 10px 22px rgba(15,109,46,0.18) !important;
+}
 
-# Set up logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('stock_analysis.log'),
-        logging.StreamHandler()
-    ]
+/* Secondary buttons:
+   - Sidebar: keep light text on marine background
+   - Main area: black text on light background (for View/Delete in Performed Analyses)
+*/
+[data-testid="stSidebar"] div.stButton > button[kind="secondary"]{
+  background: rgba(255,255,255,0.10) !important;
+  color: var(--text-on-marine) !important;
+  border: 1px solid rgba(255,255,255,0.20) !important;
+  box-shadow: none !important;
+}
+section.main div.stButton > button[kind="secondary"]{
+  background: #f3f4f6 !important;
+  color: #111827 !important; /* near-black */
+  border: 1px solid rgba(17,24,39,0.18) !important;
+  box-shadow: none !important;
+}
+section.main div.stButton > button[kind="secondary"]:hover{
+  background: #e5e7eb !important;
+}
+</style>
+""",
+    unsafe_allow_html=True,
 )
 
-custom_eps_data = {
-    "ASML": {2024: 19.3, 2023: 20.6, 2022: 16.1, 2021: 15.0, 2020: 8.9, 2019: 6.1, 2018: 6.0, 2017: 5.0, 2016: 3.8},
-    "META": {2024: 23.8, 2023: 14.9, 2022: 8.6, 2021: 14.3, 2020: 10.5, 2019: 6.6, 2018: 5.6, 2017: 3.6, 2016: 2.3, 2015: 1.2},
-    "MSFT": {2024: 11.9, 2023: 9.8, 2022: 9.8, 2021: 8.2, 2020: 5.8, 2019: 5.1, 2018: 2.1, 2017: 3.2, 2016: 2.6, 2015: 1.5},
-    "GOOGL": {2024: 8.0, 2023: 5.8, 2022: 4.6, 2021: 5.7, 2020: 3.0, 2019: 2.5, 2018: 2.2, 2017: 1.9, 2016: 1.6, 2015: 1.3},
-    "CI": {2024: 23.2, 2023: 23.0, 2022: 16.1, 2021: 16.8, 2020: 13.0, 2019: 15.1, 2018: 12.5, 2017: 9.5, 2016: 7.8, 2015: 6.9},
-    "TSM": {2024: 6.9, 2023: 5.35, 2022: 6.27, 2021: 4.2, 2020: 3.77, 2019: 2.82, 2018: 2.48, 2017: 2.25, 2016: 2.0, 2015: 1.78},
-    "JD": {2024: 3.75, 2023: 2.14, 2022: 0.94, 2021: -0.35, 2020: 4.62, 2019: 1.20, 2018: 0.10, 2017: 0.10, 2016: -0.36, 2015: -1.07},
-    "V": {2024: 9.5, 2023: 8.6, 2022: 7.5, 2021: 5.9, 2020: 4.9, 2019: 5.3, 2018: 4.3, 2017: 3.5, 2016: 2.3, 2015: 2.1},
-    "BABA": {2024: 7.5, 2023: 4.9, 2022: 4.6, 2021: 3.9, 2020: 8.8, 2019: 8.6, 2018: 5.3, 2017: 4.0, 2016: 3.1, 2015: 2.2},
-    "LDO.MI": {2024: 1.90, 2023: 1.71, 2022: 1.58, 2021: 1.32, 2020: 1.25, 2019: 1.28, 2018: 1.22, 2017: 1.18, 2016: 1.13, 2015: 1.09},
-    "LVMHF": {2024: 26.0, 2023: 30.4, 2022: 29.7, 2021: 24.1, 2020: 16.6, 2019: 14.3, 2018: 12.7, 2017: 11.2, 2016: 8.7, 2015: 8.0},
-    "VID.MC": {2024: 8.8, 2023: 7.3, 2022: 4.7, 2021: 4.5, 2020: 5.3, 2019: 5.6, 2018: 4.7, 2017: 3.6, 2016: 2.8, 2015: 2.4},
-    "ROG.SW": {2024: 18.8, 2023: 18.8, 2022: 21.0, 2021: 20.9, 2020: 19.8, 2019: 20.9, 2018: 18.6, 2017: 15.1, 2016: 14.5, 2015: 13.7},
-    "TEP.PA": {2024: 8.8, 2023: 10.2, 2022: 10.8, 2021: 9.7, 2020: 6.0, 2019: 7.0, 2018: 5.4, 2017: 5.4, 2016: 3.7, 2015: 3.5}
-}
+import matplotlib.pyplot as plt
+import io
+import yfinance as yf
+import json
+import os
+import shutil
+import zipfile
+import requests
+from datetime import datetime
+from pathlib import Path
+from DCF_main import run_monte_carlo_simulation, fetch_from_google_sheet, fetch_from_excel_template
 
-# Currency conversion rates (as of latest data)
-CURRENCY_RATES = {
-    "TWD": 0.032,  # 1 TWD = 0.032 USD
-    "CNY": 0.14,   # 1 CNY = 0.14 USD
-}
+# --- ANALYSIS STORAGE FUNCTIONS (MUST BE DEFINED FIRST) ---
+# Use absolute path for better persistence
+BASE_DIR = Path(__file__).parent.absolute()
+ANALYSES_DIR = BASE_DIR / "saved_analyses"
+ANALYSES_DIR.mkdir(exist_ok=True)
+ANALYSES_INDEX_FILE = ANALYSES_DIR / "analyses_index.json"
 
-class StockAnalyzer:
-    def __init__(self, tickers: List[str]):
-        self.tickers = tickers
-        self.setup_plot_style()
-        self.html_report = """<html><head><meta charset='utf-8'><title>Stock Analysis Report</title></head><body>"""
-        self.html_report += f"<h1>Stock Analysis Report</h1><p>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>"
-        # Initialize ttm_eps_data and annual_eps_plot_data here to ensure they always exist
-        self.ttm_eps_data = {'value': np.nan, 'date': None}
-        self.annual_eps_plot_data = pd.Series() # Initialize as an empty Series
+def load_analyses_index():
+    """Load the index of all saved analyses"""
+    if ANALYSES_INDEX_FILE.exists():
+        try:
+            with open(ANALYSES_INDEX_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            # Don't show warning here as it might be called before Streamlit is ready
+            return {}
+    return {}
+
+def get_user_name_from_index():
+    """Get all unique user names from the index"""
+    index = load_analyses_index()
+    user_names = set()
+    for ticker, analyses in index.items():
+        for analysis_id, analysis_info in analyses.items():
+            user_name = analysis_info.get('user_name')
+            if user_name:
+                user_names.add(user_name)
+    return sorted(list(user_names))
+
+def normalize_user_key(user_name: str) -> str:
+    """Normalize a user name for matching (case-insensitive)."""
+    if user_name is None:
+        return ""
+    # casefold() is stronger than lower() for international characters
+    return str(user_name).strip().casefold()
+
+def get_user_id_from_name(user_name):
+    """Get or create a user ID for a given user name"""
+    import hashlib
+    # Create a consistent user_id from normalized name (deterministic hash)
+    key = normalize_user_key(user_name)
+    user_id = hashlib.md5(key.encode()).hexdigest()[:12]
+    return user_id
+
+def is_user_name_taken(user_name):
+    """
+    Check if a user has existing saved analyses (case-insensitive).
+
+    NOTE: This is *not* an auth check; it only tells us whether this name
+    matches any stored analyses.
+    """
+    key = normalize_user_key(user_name)
+    if not key:
+        return False
+    idx = load_analyses_index()
+    for _ticker, analyses in idx.items():
+        for _analysis_id, info in analyses.items():
+            info_key = info.get("user_key") or normalize_user_key(info.get("user_name", ""))
+            if info_key == key:
+                return True
+    return False
+
+def get_user_name():
+    """Get the current user's name (must be set before use)"""
+    return st.session_state.get('user_name', None)
+
+def get_user_key():
+    """Get the current user's normalized key (case-insensitive)."""
+    key = st.session_state.get('user_key', None)
+    if key:
+        return key
+    # Backward compatible: derive from user_name if present
+    name = st.session_state.get('user_name', None)
+    derived = normalize_user_key(name)
+    if derived:
+        st.session_state.user_key = derived
+        return derived
+    return None
+
+def get_user_id():
+    """Get the current user's ID (derived from name)"""
+    return st.session_state.get("user_id", None)
+
+def set_user_name(name):
+    """Set the user name and load their existing analyses"""
+    if not name or not name.strip():
+        return False
+    
+    name = str(name).strip()
+    user_key = normalize_user_key(name)
+    user_id = get_user_id_from_name(user_key)
+    
+    # Store user info
+    st.session_state.user_name = name
+    st.session_state.user_key = user_key
+    st.session_state.user_id = user_id
+    st.session_state.user_initialized = True
+    
+    return True
+
+def get_user_analyses_index(user_name=None):
+    """Get analyses index filtered for a specific user (case-insensitive)."""
+    if user_name is None:
+        user_key = get_user_key()
+        if not user_key:
+            return {}
+    else:
+        user_key = normalize_user_key(user_name)
+        if not user_key:
+            return {}
+    
+    all_index = load_analyses_index()
+    user_index = {}
+    
+    # Filter by user_key (preferred) or normalized user_name (backward compatible)
+    for ticker, analyses in all_index.items():
+        user_analyses = {}
+        for analysis_id, analysis_info in analyses.items():
+            info_key = analysis_info.get("user_key") or normalize_user_key(analysis_info.get("user_name", ""))
+            if info_key == user_key:
+                user_analyses[analysis_id] = analysis_info
+        if user_analyses:
+            user_index[ticker] = user_analyses
+    
+    return user_index
+
+def count_user_analyses(user_name):
+    """Count how many analyses a user has"""
+    user_index = get_user_analyses_index(user_name)
+    count = 0
+    for ticker, analyses in user_index.items():
+        count += len(analyses)
+    return count
+
+def save_analyses_index(index):
+    """Save the index of all analyses with error handling"""
+    try:
+        # Create backup before saving
+        if ANALYSES_INDEX_FILE.exists():
+            backup_file = ANALYSES_INDEX_FILE.with_suffix('.json.bak')
+            shutil.copy2(ANALYSES_INDEX_FILE, backup_file)
         
-    def setup_plot_style(self):
-        """Set up consistent plot styling"""
-        plt.style.use('seaborn-v0_8')
-        plt.rcParams['figure.figsize'] = [12, 6]
-        plt.rcParams['font.size'] = 10
+        # Save with atomic write (write to temp file first, then rename)
+        temp_file = ANALYSES_INDEX_FILE.with_suffix('.json.tmp')
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            json.dump(index, f, indent=2, ensure_ascii=False)
         
-    def validate_dataframe(self, df: pd.DataFrame, required_columns: List[str]) -> bool:
-        """Validate DataFrame structure and check for NaN values in critical columns"""
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            logging.error("DataFrame is not valid or is empty.")
-            return False
-        
-        for col in required_columns:
-            if col not in df.columns:
-                logging.error(f"Required column '{col}' missing from DataFrame.")
-                return False
-            if df[col].isnull().any():
-                logging.warning(f"Column '{col}' contains NaN values.")
-                # Depending on strictness, this could be a return False
+        # Atomic rename
+        temp_file.replace(ANALYSES_INDEX_FILE)
         return True
+    except Exception as e:
+        st.error(f"Error saving analyses index: {e}")
+        return False
 
-    @lru_cache(maxsize=100)
-    def get_stock_data(self, ticker_symbol: str, max_retries: int = 3) -> Optional[yf.Ticker]:
-        """Get stock data with retry logic and caching"""
-        for attempt in range(max_retries):
-            try:
-                stock = yf.Ticker(ticker_symbol)
-                # Test if we can access the info
-                _ = stock.info
-                return stock
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # Exponential backoff
-                    logging.warning(f"Attempt {attempt + 1} failed for {ticker_symbol}. Waiting {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    logging.error(f"Failed to get data for {ticker_symbol} after {max_retries} attempts: {str(e)}")
-                    return None
-        return None
+def validate_analysis_files(analysis_id):
+    """Check if analysis files still exist on disk"""
+    analysis_dir = ANALYSES_DIR / analysis_id
+    if not analysis_dir.exists():
+        return False
+    
+    # Check for required files
+    required_files = [
+        analysis_dir / "results_plot.png",
+        analysis_dir / "valuation_summary.json"
+    ]
+    
+    return all(f.exists() for f in required_files)
 
-    def style_dataframe(self, df: pd.DataFrame):
-        """Apply consistent styling to DataFrames"""
-        return df.style.set_table_styles([
-            {'selector': 'th', 'props': [('background-color', 'lightblue'), ('color', 'black'), ('text-align', 'center')]},
-            {'selector': 'td', 'props': [('text-align', 'center')]}
-        ])
-
-    def style_dataframe_html(self, df: pd.DataFrame, show_index: bool = False) -> str:
-        """Return styled DataFrame as HTML string with validation"""
-        if not isinstance(df, pd.DataFrame):
-            raise StockAnalyzerError("Input must be a pandas DataFrame")
+def cleanup_orphaned_analyses(user_name=None):
+    """Remove entries from index where files no longer exist (for current user only)"""
+    if user_name is None:
+        user_key = get_user_key()
+        if not user_key:
+            return False
+    else:
+        user_key = normalize_user_key(user_name)
+        if not user_key:
+            return False
+    
+    index = load_analyses_index()
+    cleaned = False
+    
+    for ticker in list(index.keys()):
+        for analysis_id in list(index[ticker].keys()):
+            analysis_info = index[ticker][analysis_id]
+            # Only clean up analyses belonging to this user
+            info_key = analysis_info.get("user_key") or normalize_user_key(analysis_info.get("user_name", ""))
+            if info_key == user_key:
+                if not validate_analysis_files(analysis_id):
+                    # File doesn't exist, remove from index
+                    del index[ticker][analysis_id]
+                    cleaned = True
         
-        try:
-            return df.style.set_table_styles([
-                {'selector': 'th', 'props': [('background-color', 'lightblue'), ('color', 'black'), ('text-align', 'center'), ('border', '1px solid black')]},
-                {'selector': 'td', 'props': [('text-align', 'center'), ('border', '1px solid black')]}
-            ]).to_html(index=show_index)
-        except Exception as e:
-            logging.error(f"Error creating HTML from DataFrame: {str(e)}")
-            return df.to_html(index=show_index)  # Return basic HTML if styling fails
-
-    def _prepare_historical_data(self, stock: yf.Ticker, hist: pd.DataFrame) -> pd.DataFrame:
-        """Prepares historical data with Diluted EPS and P/E Ratio."""
-        try:
-            # Validate input DataFrame
-            required_columns = ['Close']
-            if not self.validate_dataframe(hist, required_columns):
-                raise StockAnalyzerError("Invalid historical data structure")
-
-            # Check if custom EPS data exists for the current ticker
-            if stock.ticker in custom_eps_data:
-                logging.info(f"Using custom EPS data for {stock.ticker}")
-                eps_values = custom_eps_data[stock.ticker]
-                # Generate dates for the custom EPS data, using July 2nd of each year
-                eps_dates = [datetime(year, 7, 2) for year in sorted(eps_values.keys())]
-                custom_eps_series = pd.Series([eps_values[year] for year in sorted(eps_values.keys())], index=pd.to_datetime(eps_dates).tz_localize(None))
-
-                # Reindex custom_eps_series to align with hist's daily index
-                combined_eps = custom_eps_series.reindex(hist.index)
-                combined_eps = combined_eps.bfill().ffill() # Ensure all NaNs are filled, including leading ones
-
-                self.annual_eps_plot_data = custom_eps_series.copy() # Store for direct plotting (original annual points)
-                logging.debug(f"DEBUG: annual_eps_plot_data after custom data processing in _prepare_historical_data: {self.annual_eps_plot_data}")
-
-            # This block will now calculate TTM EPS for ALL tickers, regardless of custom annual data
-            # It ensures self.ttm_eps_data always holds the latest *true* TTM from Yahoo
-            ttm_eps = np.nan
-            ttm_date = None
-            try:
-                if 'Diluted EPS' in stock.quarterly_financials.index and not stock.quarterly_financials.empty:
-                    quarterly_diluted_eps = stock.quarterly_financials.loc['Diluted EPS']
-                    # Ensure quarterly_diluted_eps index is datetime and timezone-naive
-                    quarterly_diluted_eps.index = pd.to_datetime(quarterly_diluted_eps.index, errors='coerce').dropna()
-                    quarterly_diluted_eps.index = quarterly_diluted_eps.index.tz_localize(None)
-                    quarterly_diluted_eps = quarterly_diluted_eps.sort_index(ascending=False)
-
-                    if len(quarterly_diluted_eps) >= 4:
-                        ttm_eps = quarterly_diluted_eps.head(4).sum()
-                        # Use the latest date from the quarterly EPS for the TTM date
-                        ttm_date = quarterly_diluted_eps.index[0]
-                        
-                        # Convert TTM EPS to USD for specific stocks
-                        if stock.ticker == "TSM":
-                            ttm_eps *= CURRENCY_RATES["TWD"]
-                        elif stock.ticker in ["JD", "BABA"]:
-                            ttm_eps *= CURRENCY_RATES["CNY"]
-                    else:
-                        logging.warning(f"Less than 4 quarterly Diluted EPS values available for {stock.ticker}. Cannot calculate TTM EPS.")
-            except Exception as e:
-                logging.error(f"Error calculating TTM EPS for {stock.ticker}: {str(e)}")
-
-            self.ttm_eps_data = {'value': ttm_eps, 'date': ttm_date}
-
-            # If no custom data, or if custom data doesn't cover all years,
-            # we need to combine with Yahoo's annual/quarterly EPS for comprehensive plotting
-            if stock.ticker not in custom_eps_data:
-                # Original logic for fetching EPS from yfinance if no custom data is provided
-                try:
-                    annual_income_stmt = stock.income_stmt
-                    quarterly_income_stmt = stock.quarterly_financials
-                    
-                    if annual_income_stmt is None or annual_income_stmt.empty:
-                        logging.warning(f"No annual income statement data available for {stock.ticker}")
-                    if quarterly_income_stmt is None or quarterly_income_stmt.empty:
-                        logging.warning(f"No quarterly income statement data available for {stock.ticker}")
-                except Exception as e:
-                    logging.error(f"Error fetching financial statements for {stock.ticker}: {str(e)}")
-                    annual_income_stmt = pd.DataFrame()
-                    quarterly_income_stmt = pd.DataFrame()
-
-                # Extract Diluted EPS as a Series, then convert its index to datetime with errors='coerce'
-                try:
-                    annual_eps = annual_income_stmt.loc['Diluted EPS'].dropna() if 'Diluted EPS' in annual_income_stmt.index else pd.Series()
-                    annual_eps.index = pd.to_datetime(annual_eps.index, errors='coerce').dropna()
-                    annual_eps.index = annual_eps.index.tz_localize(None)
-                    annual_eps = annual_eps.sort_index()
-
-                    quarterly_eps = quarterly_income_stmt.loc['Diluted EPS'].dropna() if 'Diluted EPS' in quarterly_income_stmt.index else pd.Series()
-                    quarterly_eps.index = pd.to_datetime(quarterly_eps.index, errors='coerce').dropna()
-                    quarterly_eps.index = quarterly_eps.index.tz_localize(None)
-                    quarterly_eps = quarterly_eps.sort_index()
-
-                    combined_eps = pd.concat([annual_eps, quarterly_eps]).sort_index().drop_duplicates(keep='last')
-
-                except Exception as e:
-                    logging.error(f"Error processing EPS data for {stock.ticker}: {str(e)}")
-                    combined_eps = pd.Series(index=hist.index, dtype=float)
-
-                # Ensure combined_eps index is timezone-naive
-                if combined_eps.index.tz is not None:
-                    combined_eps.index = combined_eps.index.tz_localize(None)
-
-                # Adjust EPS dates to July 2nd for consistent plotting
-                if not combined_eps.empty:
-                    combined_eps.index = combined_eps.index.map(lambda x: x.replace(month=7, day=2))
-
-                self.annual_eps_plot_data = combined_eps.copy() # Store for direct plotting
-                logging.debug(f"DEBUG: annual_eps_plot_data after non-custom data processing in _prepare_historical_data: {self.annual_eps_plot_data}")
-
-            # Drop potential duplicate dates from hist before reindexing
-            hist = hist[~hist.index.duplicated(keep='first')]
-
-            # Simplify hist_reindexed creation, as hist should already have a clean index
-            hist_reindexed = hist.copy()
-
-            # Ensure combined_eps is aligned to hist_reindexed index right before merge and is a DataFrame
-            combined_eps_df = combined_eps.to_frame(name='Diluted EPS')
-            combined_eps_df = combined_eps_df.reindex(hist_reindexed.index)
-
-            hist_reindexed = hist_reindexed.merge(combined_eps_df, left_index=True, right_index=True, how='left')
-            # The Diluted EPS column in hist_reindexed now contains NaNs for dates before the first provided EPS and between annual points.
-
-            # Calculate P/E Ratio
-            hist_reindexed['P/E Ratio'] = hist_reindexed['Close'] / hist_reindexed['Diluted EPS']
-
-            # Ensure columns exist and fill with NaN if they couldn't be computed
-            if 'Diluted EPS' not in hist_reindexed.columns:
-                hist_reindexed['Diluted EPS'] = np.nan
-            if 'P/E Ratio' not in hist_reindexed.columns:
-                hist_reindexed['P/E Ratio'] = np.nan
-
-            # Ensure no duplicate indices in the final enriched history
-            hist_enriched = hist_reindexed[~hist_reindexed.index.duplicated(keep='first')]
-            # Apply ffill() to hist_enriched for Diluted EPS after all merges
-            hist_enriched['Diluted EPS'] = hist_enriched['Diluted EPS'].ffill()
-
-            # Recalculate P/E Ratio after final ffill to ensure it aligns with filled EPS
-            hist_enriched['P/E Ratio'] = hist_enriched['Close'] / hist_enriched['Diluted EPS']
-
-            self.hist_enriched_for_display = hist_enriched
-
-            logging.info(f"DEBUG: hist_enriched Diluted EPS and P/E Ratio head for {stock.info.get('shortName', stock.ticker)}:\n{hist_enriched[['Diluted EPS', 'P/E Ratio']].head()}")
-            logging.info(f"DEBUG: hist_enriched info for {stock.info.get('shortName', stock.ticker)}:")
-            hist_enriched.info()
-
-            return hist_enriched
-        except Exception as e:
-            logging.error(f"Error preparing historical data for {stock.info.get('shortName', stock.ticker)}: {str(e)}")
-            return hist
-
-    def analyze_stock(self, ticker_symbol: str):
-        try:
-            logging.info(f"Analyzing {ticker_symbol}")
-            stock = self.get_stock_data(ticker_symbol)
-            if stock is None:
-                return
-            short_name = stock.info.get('shortName', ticker_symbol)
-            # Fetch historical data for a specific 10-year period aligned with user-provided EPS
-            end_date = datetime.now()
-            start_date = end_date.replace(year=end_date.year - 10)
-            hist = stock.history(start=start_date, end=end_date)
-            # Ensure hist is timezone-naive immediately after fetching
-            hist.index = hist.index.tz_localize(None) if hist.index.tz is not None else hist.index
-            # Ensure hist has a unique index immediately after fetching
-            hist = hist[~hist.index.duplicated(keep='first')]
-            
-            hist = self._prepare_historical_data(stock, hist) # Enrich hist with EPS and P/E
-            
-            # HTML output
-            self.html_report += f"<h2>{short_name} ({ticker_symbol})</h2>"
-            self.html_report += self.display_financial_metrics(stock, hist, short_name) # Add financial metrics and EPS/PE plot
-        except Exception as e:
-            logging.error(f"Error analyzing {ticker_symbol}: {str(e)}")
-
-    def display_financial_metrics(self, stock: yf.Ticker, hist: pd.DataFrame, short_name: str) -> str:
-        """Display financial metrics with enhanced error handling and validation"""
-        html_content = ""
-
-        try:
-            # Key Metrics
-            current_price = stock.info.get('currentPrice', 0)
-            ttm_eps = self.ttm_eps_data['value'] if hasattr(self, 'ttm_eps_data') else None
-            current_pe = current_price / ttm_eps if ttm_eps and ttm_eps != 0 else None
-            forward_eps = stock.info.get('forwardEps', None)
-            forward_pe = current_price / forward_eps if forward_eps and forward_eps != 0 else None
-
-            metrics = {
-                'Market Cap': f"{stock.info.get('marketCap', np.nan):,.2f}" if stock.info.get('marketCap') else 'N/A',
-                'P/E Ratio': f"{current_pe:.2f}" if current_pe else 'N/A',
-                'Forward P/E': f"{forward_pe:.2f}" if forward_pe else 'N/A',
-                'Beta': f"{stock.info.get('beta', np.nan):.2f}" if stock.info.get('beta') else 'N/A'
-            }
-            metrics_df = pd.DataFrame(list(metrics.items()), columns=['Metric', 'Value']).reset_index(drop=True)
-            html_content += "<h3>Key Metrics</h3>" + self.style_dataframe_html(metrics_df, show_index=False)
-
-            # Company Summary
-            summary_data = {
-                'shortName': stock.info.get('shortName', 'N/A'),
-                'industry': stock.info.get('industry', 'N/A'),
-                'sector': stock.info.get('sector', 'N/A'),
-                'beta': f"{stock.info.get('beta', np.nan):.2f}" if stock.info.get('beta') else 'N/A'
-            }
-            summary_df = pd.DataFrame(list(summary_data.items()), columns=['Parameter', 'Value']).transpose()
-            summary_df.columns = summary_df.iloc[0]
-            summary_df = summary_df[1:]
-            html_content += "<h3>Summary</h3>" + self.style_dataframe_html(summary_df, show_index=False)
-
-            # Dividends
-            html_content += self._display_dividends(stock)
-
-            # Holders
-            html_content += self._display_holders(stock)
-
-            # Valuation
-            html_content += self._display_valuation(stock)
-
-            # Targets
-            html_content += self._display_targets(stock)
-
-            # Recommendations
-            html_content += self._display_recommendations(stock)
-
-            # Earnings Calendar
-            html_content += self._display_earnings_calendar(stock)
-
-            # Income Statement
-            html_content += self._display_income_statement(stock)
-
-            # Balance Sheet
-            html_content += self._display_balance_sheet(stock)
-
-            # Cash Flow
-            html_content += self._display_cash_flow(stock)
-
-            # Profitability
-            html_content += self._display_profitability(stock)
-
-            # EPS and P/E Plots
-            html_content += self._generate_eps_pe_plots(stock, hist, short_name)
-
-            return html_content
-
-        except Exception as e:
-            logging.error(f"Error displaying financial metrics for {short_name}: {str(e)}")
-            return f"<p>Error displaying financial metrics: {str(e)}</p>"
-
-    def _display_dividends(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Dividends section"""
-        try:
-            info = stock.info
-            if not info:
-                return "<p>Dividend data not available.</p>"
-            
-            data = {
-                "Annual Dividend Yield (%)": f"{info.get('dividendYield', np.nan) :.2f}" if pd.notnull(info.get('dividendYield')) else 'N/A',
-                "5-Year Average Dividend Yield (%)": f"{info.get('fiveYearAvgDividendYield', np.nan) :.2f}" if pd.notnull(info.get('fiveYearAvgDividendYield')) else 'N/A',
-                "10-Year Annual Dividend Growth (%)": f"{info.get('tenYrAvgAnnualIncreaseInDividends', np.nan) / 100:.2f}" if pd.notnull(info.get('tenYrAvgAnnualIncreaseInDividends')) else 'N/A',
-                "Payout Ratio (%)": f"{info.get('payoutRatio', np.nan) :.2f}" if pd.notnull(info.get('payoutRatio')) else 'N/A'
-            }
-            df = pd.DataFrame(data, index=[0])
-            
-            return f"<h3>Dividends</h3>" + self.style_dataframe_html(df, show_index=False)
-        except Exception as e:
-            logging.error(f"Error displaying dividends for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving dividend data: {str(e)}</p>"
-
-    def _display_holders(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Major Holders information"""
-        try:
-            major_holders = stock.major_holders
-            if major_holders is None:
-                return "<p>Major holders data not available.</p>"
-            
-            # If major_holders is a Series, convert it to a DataFrame for consistent processing
-            if isinstance(major_holders, pd.Series):
-                major_holders_df = major_holders.to_frame().T
-            elif isinstance(major_holders, pd.DataFrame):
-                major_holders_df = major_holders
-            else:
-                return "<p>Major holders data in unexpected format.</p>"
-
-            if major_holders_df.empty:
-                return "<p>Major holders data not available.</p>"
-            
-            # Attempt to reset index and set column names more robustly
-            # Check if major_holders_df has a MultiIndex, if so, flatten it or reset it
-            if isinstance(major_holders_df.index, pd.MultiIndex):
-                major_holders_df = major_holders_df.reset_index(level=0, drop=True)
-            
-            # Ensure it has 2 columns before proceeding, if not, try to reshape
-            if major_holders_df.shape[1] != 2:
-                if major_holders_df.shape[0] == 2 and major_holders_df.shape[1] > 0: # Handle cases like a single row with multiple columns
-                    major_holders_df = major_holders_df.transpose() # Transpose if it's two rows, but columns represent metrics
-                elif major_holders_df.shape[1] == 1: # If it's a single column DataFrame
-                    major_holders_df = major_holders_df.reset_index()
-                else:
-                    logging.warning(f"Unexpected major_holders DataFrame shape for {stock.ticker}: {major_holders_df.shape}. Expected 2 columns or convertible. Skipping display.")
-                    return "<p>Major holders data available, but in unexpected format or shape for display.</p>"
-            
-            if major_holders_df.shape[1] != 2:
-                logging.warning(f"Major holders DataFrame still not in 2 columns after reshaping attempts for {stock.ticker}. Final shape: {major_holders_df.shape}. Skipping display.")
-                return "<p>Major holders data available, but could not be formatted for display.</p>"
-
-            major_holders_df.columns = ['Metric', 'Value']
-            major_holders_df.set_index('Metric', inplace=True)
-            major_holders_df = major_holders_df.transpose()
-
-            # Rename columns to match the desired output
-            major_holders_df = major_holders_df.rename(columns={
-                '% Held by Insiders': 'Held by insiders (%)',
-                '% Held by Institutions': 'Held by institutions (%)',
-                'Shares Outstanding': 'Shares Outstanding (M)'  # Assuming this needs to be in Millions
-            })
-            
-            # Convert 'Shares Outstanding (M)' to millions if it's a large number
-            if 'Shares Outstanding (M)' in major_holders_df.columns:
-                try:
-                    major_holders_df['Shares Outstanding (M)'] = pd.to_numeric(major_holders_df['Shares Outstanding (M)'].astype(str).str.replace(',', '').str.replace('%', ''), errors='coerce') / 1_000_000
-                    major_holders_df['Shares Outstanding (M)'] = major_holders_df['Shares Outstanding (M)'].apply(lambda x: f"{x:,.2f}" if pd.notnull(x) else 'N/A')
-                except Exception as e:
-                    logging.warning(f"Error converting Shares Outstanding (M) for {stock.ticker}: {e}. Keeping original format.")
-            
-            # Format percentage columns
-            for col in ['Held by insiders (%)', 'Held by institutions (%)']:
-                if col in major_holders_df.columns:
-                    # Remove '%' before converting to float
-                    major_holders_df[col] = major_holders_df[col].astype(str).str.replace('%', '').astype(float)
-                    major_holders_df[col] = major_holders_df[col].apply(lambda x: f"{x * 100:.2f}" if pd.notnull(x) else 'N/A')
-
-            return f"<h3>Holders</h3>" + self.style_dataframe_html(major_holders_df, show_index=False)
-        except Exception as e:
-            logging.error(f"Error displaying major holders for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving major holders data: {str(e)}</p>"
-
-    def _display_valuation(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Valuation Measures"""
-        try:
-            info = stock.info
-            if not info:
-                return "<p>Valuation data not available.</p>"
-            
-            trailing_pe = info.get('trailingPE', np.nan)
-            forward_pe = info.get('forwardPE', np.nan)
-
-            data = {
-                'trailingPE': f"{trailing_pe:.2f}" if pd.notnull(trailing_pe) else 'N/A',
-                'forwardPE': f"{forward_pe:.2f}" if pd.notnull(forward_pe) else 'N/A',
-            }
-            df = pd.DataFrame(data, index=[0])
-
-            return f"<h3>Valuation</h3>" + self.style_dataframe_html(df, show_index=False)
-        except Exception as e:
-            logging.error(f"Error displaying valuation for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving valuation data: {str(e)}</p>"
-
-    def _display_targets(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Analyst Price Targets"""
-        try:
-            info = stock.info
-            if not info:
-                return "<p>Analyst target data not available.</p>"
-            
-            target_mean_price = info.get('targetMeanPrice', np.nan)
-            target_high_price = info.get('targetHighPrice', np.nan)
-            target_median_price = info.get('targetMedianPrice', np.nan)
-            current_price = info.get('currentPrice', np.nan)
-            recommendation_mean = info.get('recommendationMean', np.nan)
-            recommendation_key = info.get('recommendationKey', 'N/A')
-
-            data = {
-                'targetMeanPrice': f"{target_mean_price:.2f}" if pd.notnull(target_mean_price) else 'N/A',
-                'targetHighPrice': f"{target_high_price:.2f}" if pd.notnull(target_high_price) else 'N/A',
-                'targetMedianPrice': f"{target_median_price:.2f}" if pd.notnull(target_median_price) else 'N/A',
-                'currentPrice': f"{current_price:.2f}" if pd.notnull(current_price) else 'N/A',
-                'recommendationMean': f"{recommendation_mean:.2f}" if pd.notnull(recommendation_mean) else 'N/A',
-                'recommendationKey': recommendation_key
-            }
-            df = pd.DataFrame(list(data.items()), columns=['Metric', 'Value'])
-            
-            return f"<h3>Targets</h3>" + self.style_dataframe_html(df, show_index=False)
-        except Exception as e:
-            logging.error(f"Error displaying analyst targets for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving analyst targets data: {str(e)}</p>"
-
-    def _display_recommendations(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Analyst Recommendations"""
-        try:
-            recommendations = stock.recommendations
-            if recommendations is None or recommendations.empty:
-                return "<p>Analyst recommendations data not available.</p>"
-            
-            # Use only the latest recommendation for each period
-            recommendations_df = recommendations.groupby('period').last().reset_index()
-
-            # Select and reorder columns as seen in the image
-            cols = ['period', 'strongBuy', 'buy', 'hold', 'sell', 'strongSell']
-            recommendations_df = recommendations_df[cols]
-            
-            return f"<h3>Recommendations</h3>" + self.style_dataframe_html(recommendations_df, show_index=False)
-        except Exception as e:
-            logging.error(f"Error displaying recommendations for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving recommendations data: {str(e)}</p>"
-
-    def _display_earnings_calendar(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Earnings Calendar"""
-        try:
-            # Initialize empty DataFrame for combined data
-            combined_df = pd.DataFrame(columns=['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise (%)'])
-            
-            # Get future earnings data from calendar
-            calendar = stock.calendar
-            logging.info(f"Calendar data type: {type(calendar)}")
-            logging.info(f"Calendar data: {calendar}")
-            
-            if calendar is not None:
-                # Handle both DataFrame and dict formats
-                if isinstance(calendar, pd.DataFrame) and not calendar.empty:
-                    future_date = calendar.index[0] if not calendar.empty else None
-                    future_eps = calendar['Earnings Average'].iloc[0] if 'Earnings Average' in calendar.columns else None
-                elif isinstance(calendar, dict):
-                    # Extract date and EPS from dictionary format
-                    earnings_date = calendar.get('Earnings Date')
-                    earnings_avg = calendar.get('Earnings Average')
-                    
-                    if isinstance(earnings_date, list) and len(earnings_date) > 0:
-                        future_date = pd.to_datetime(earnings_date[0])
-                    else:
-                        future_date = None
-                        
-                    if isinstance(earnings_avg, list) and len(earnings_avg) > 0:
-                        future_eps = earnings_avg[0]
-                    else:
-                        future_eps = None
-                else:
-                    future_date = None
-                    future_eps = None
-                
-                if future_date is not None:
-                    future_row = pd.DataFrame({
-                        'Earnings Date': [future_date.strftime('%Y-%m-%d')],
-                        'EPS Estimate': [f"{future_eps:.2f}" if pd.notnull(future_eps) else 'N/A'],
-                        'Reported EPS': ['N/A'],  # Future earnings haven't been reported yet
-                        'Surprise (%)': ['N/A']   # No surprise for future earnings
-                    })
-                    combined_df = pd.concat([future_row, combined_df], ignore_index=True)
-            
-            # Get historical earnings data
-            earnings_history = stock.earnings_history
-            logging.info(f"Earnings history type: {type(earnings_history)}")
-            logging.info(f"Earnings history data: {earnings_history}")
-            
-            if earnings_history is not None and not earnings_history.empty:
-                # Ensure the index is named 'Date' and convert to datetime
-                if earnings_history.index.name is None:
-                    earnings_history.index.name = 'Date'
-                
-                earnings_history.index = pd.to_datetime(earnings_history.index, errors='coerce').dropna().tz_localize(None)
-                earnings_history = earnings_history.sort_index(ascending=False)  # Show most recent first
-                
-                # Select and rename columns
-                relevant_cols = {
-                    'epsEstimate': 'EPS Estimate',
-                    'epsActual': 'Reported EPS',
-                    'surprisePercent': 'Surprise (%)'
-                }
-                
-                # Filter for only existing relevant columns before renaming
-                cols_to_select = [col for col in relevant_cols.keys() if col in earnings_history.columns]
-                hist_df = earnings_history[cols_to_select].rename(columns=relevant_cols)
-                
-                # Add 'Earnings Date' from the index
-                hist_df.insert(0, 'Earnings Date', hist_df.index.strftime('%Y-%m-%d'))
-                
-                # Format numerical values
-                for col in ['EPS Estimate', 'Reported EPS']:
-                    if col in hist_df.columns:
-                        hist_df[col] = hist_df[col].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else 'N/A')
-                
-                if 'Surprise (%)' in hist_df.columns:
-                    hist_df['Surprise (%)'] = hist_df['Surprise (%)'].apply(
-                        lambda x: f"{x * 100:.2f}" if pd.notnull(x) else 'N/A'
-                    )
-                
-                # Combine with future data
-                combined_df = pd.concat([combined_df, hist_df], ignore_index=True)
-            
-            if combined_df.empty:
-                return "<p>Earnings calendar data not available.</p>"
-            
-            return f"<h3>Earnings Calendar</h3>" + self.style_dataframe_html(combined_df, show_index=False)
-            
-        except Exception as e:
-            logging.error(f"Error displaying earnings calendar for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving earnings calendar data: {str(e)}</p>"
-
-    def _display_income_statement(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Income Statement"""
-        try:
-            income_stmt = stock.income_stmt
-            quarterly_income_stmt = stock.quarterly_financials
-
-            if income_stmt is None or income_stmt.empty:
-                return "<p>Income Statement data not available.</p>"
-            
-            fields_of_interest = [
-                'Total Revenue',
-                'Research And Development',
-                'EBITDA',
-                'Operating Income',
-                'Net Income',
-                'Diluted EPS'
-            ]
-            
-            # Calculate TTM for relevant fields from quarterly data
-            ttm_values = {}
-            for field in fields_of_interest:
-                if field in quarterly_income_stmt.index:
-                    field_values = pd.to_numeric(quarterly_income_stmt.loc[field][:4], errors='coerce')
-                    if field_values.count() == 4:
-                        ttm_values[field] = field_values.sum()
-                    else:
-                        ttm_values[field] = np.nan
-                else:
-                    ttm_values[field] = np.nan
-
-            ttm_df_transposed = pd.DataFrame(ttm_values, index=["TTM"]).transpose() / 1_000_000
-            ttm_df_transposed = ttm_df_transposed.apply(lambda col: col.map(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and not np.isnan(x) else 'N/A')) # Changed applymap to apply with map
-
-            filtered_data = {f: income_stmt.loc[f] if f in income_stmt.index else np.nan for f in fields_of_interest}
-            filtered_annual_income_statement = pd.DataFrame(filtered_data) / 1_000_000
-            filtered_annual_income_statement = filtered_annual_income_statement.apply(lambda col: col.map(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and not np.isnan(x) else 'N/A')) # Changed applymap to apply with map
-            filtered_annual_income_statement = filtered_annual_income_statement.transpose()
-            
-            final_income_statement = pd.concat([ttm_df_transposed, filtered_annual_income_statement], axis=1)
-            final_income_statement.columns = final_income_statement.columns.astype(str)
-            final_income_statement.columns.values[0] = 'TTM'
-
-            return f"<h3>Income Statement (in Millions)</h3>" + self.style_dataframe_html(final_income_statement)
-        except Exception as e:
-            logging.error(f"Error displaying income statement for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving income statement data: {str(e)}</p>"
-
-    def _display_balance_sheet(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Balance Sheet"""
-        try:
-            balance = stock.balance_sheet
-            if balance is None or balance.empty:
-                return "<p>Balance Sheet data not available.</p>"
-            
-            filtered_balance = balance.loc[['Cash And Cash Equivalents', 'Total Assets', 'Long Term Debt And Capital Lease Obligation', 'Total Debt', 'Total Liabilities Net Minority Interest', 'Stockholders Equity']] / 1_000_000
-            filtered_balance.columns = filtered_balance.columns.astype(str)
-            filtered_balance = filtered_balance.apply(lambda col: col.map(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and not np.isnan(x) else 'N/A')) # Changed applymap to apply with map
-
-            return f"<h3>Balance (in Millions)</h3>" + self.style_dataframe_html(filtered_balance)
-        except Exception as e:
-            logging.error(f"Error displaying balance sheet for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving balance sheet data: {str(e)}</p>"
-
-    def _display_cash_flow(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Cash Flow Statement"""
-        try:
-            cashflow = stock.cashflow
-            cashflow_qtr = stock.quarterly_cashflow
-
-            if cashflow is None or cashflow.empty:
-                return "<p>Cash Flow data not available.</p>"
-            
-            fields_of_interest = ['Net Income From Continuing Operations', 'Depreciation And Amortization', 'Stock Based Compensation', 'Operating Gains Losses', 'Change In Working Capital', 'Operating Cash Flow', 'Capital Expenditure', 'Net PPE Purchase And Sale', 'Net Business Purchase And Sale', 'Investing Cash Flow', 'Financing Cash Flow', 'Free Cash Flow']
-            
-            ttm_values = {}
-            for field in fields_of_interest:
-                if field in cashflow_qtr.index:
-                    field_values = pd.to_numeric(cashflow_qtr.loc[field][:4], errors='coerce')
-                    if field_values.count() == 4:
-                        ttm_values[field] = field_values.sum()
-                    else:
-                        ttm_values[field] = np.nan
-                else:
-                    ttm_values[field] = np.nan
-            
-            ttm_df_transposed = pd.DataFrame(ttm_values, index=["TTM"]).transpose() / 1_000_000
-            ttm_df_transposed = ttm_df_transposed.apply(lambda col: col.map(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and not np.isnan(x) else 'N/A')) # Changed applymap to apply with map
-
-            filtered_cashflow = pd.DataFrame(index=fields_of_interest, columns=cashflow.columns)
-            for field in fields_of_interest:
-                if field in cashflow.index:
-                    filtered_cashflow.loc[field] = cashflow.loc[field] / 1_000_000
-                else:
-                    filtered_cashflow.loc[field] = np.nan
-
-            filtered_cashflow = filtered_cashflow.apply(lambda col: col.map(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and not np.isnan(x) else 'N/A')) # Changed applymap to apply with map
-
-            final_cashflow = pd.concat([ttm_df_transposed, filtered_cashflow], axis=1)
-            final_cashflow.columns = final_cashflow.columns.astype(str)
-            final_cashflow.columns.values[0] = 'TTM'
-
-            return f"<h3>Cash Flow (in Millions)</h3>" + self.style_dataframe_html(final_cashflow)
-        except Exception as e:
-            logging.error(f"Error displaying cash flow for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving cash flow data: {str(e)}</p>"
-
-    def _display_profitability(self, stock: yf.Ticker) -> str:
-        """Generate HTML for Profitability metrics"""
-        try:
-            info = stock.info
-            if not info:
-                return "<p>Profitability data not available.</p>"
-            
-            data = {
-                "Profit Margin (%)": f"{info.get('profitMargins', np.nan) * 100:.2f}" if pd.notnull(info.get('profitMargins')) else 'N/A',
-                "Operating Margin (%)": f"{info.get('operatingMargins', np.nan) * 100:.2f}" if pd.notnull(info.get('operatingMargins')) else 'N/A',
-            }
-            df = pd.DataFrame(data, index=[0])
-
-            return f"<h3>Profitability</h3>" + self.style_dataframe_html(df, show_index=False)
-        except Exception as e:
-            logging.error(f"Error displaying profitability for {stock.ticker}: {str(e)}")
-            return f"<p>Error retrieving profitability data: {str(e)}</p>"
-
-    def _generate_eps_pe_plots(self, stock: yf.Ticker, hist: pd.DataFrame, short_name: str) -> str:
-        """Generate EPS and P/E ratio plots with error handling"""
-        plot_html = "" # Initialize html_content
-        try:
-            if not isinstance(hist, pd.DataFrame) or hist.empty:
-                raise StockAnalyzerError("Invalid historical data for plotting")
-
-            # Check if Diluted EPS data is available before plotting
-            # For tickers with custom EPS, use the stored annual EPS data directly for precise plotting
-            if stock.ticker in custom_eps_data:
-                # Use the stored annual EPS data; its index already has the correct dates (July 2nd)
-                annual_eps_for_plot = self.annual_eps_plot_data.copy()
-                # Ensure only one point per year by dropping duplicates, keeping the latest if any
-                annual_eps_for_plot = annual_eps_for_plot[~annual_eps_for_plot.index.duplicated(keep='last')]
-
-            elif 'Diluted EPS' in stock.income_stmt.index and not stock.income_stmt.loc['Diluted EPS'].isnull().all():
-                # For other tickers, extract annual/quarterly EPS directly for plotting, not the ffill'd daily data
-                annual_eps_raw = stock.income_stmt.loc['Diluted EPS'].dropna() if 'Diluted EPS' in stock.income_stmt.index else pd.Series()
-                annual_eps_raw.index = pd.to_datetime(annual_eps_raw.index, errors='coerce').dropna()
-                annual_eps_raw.index = annual_eps_raw.index.tz_localize(None)
-                annual_eps_raw = annual_eps_raw.sort_index()
-
-                quarterly_eps_raw = stock.quarterly_financials.loc['Diluted EPS'].dropna() if 'Diluted EPS' in stock.quarterly_financials.index else pd.Series()
-                quarterly_eps_raw.index = pd.to_datetime(quarterly_eps_raw.index, errors='coerce').dropna()
-                quarterly_eps_raw.index = quarterly_eps_raw.index.tz_localize(None)
-                quarterly_eps_raw = quarterly_eps_raw.sort_index()
-
-                combined_eps_raw = pd.concat([annual_eps_raw, quarterly_eps_raw]).sort_index().drop_duplicates(keep='last')
-                
-                # Adjust EPS dates to July 2nd for consistent plotting
-                if not combined_eps_raw.empty:
-                    combined_eps_raw.index = combined_eps_raw.index.map(lambda x: x.replace(month=7, day=2))
-                
-                annual_eps_for_plot = combined_eps_raw.copy()
-                annual_eps_for_plot = annual_eps_for_plot[~annual_eps_for_plot.index.duplicated(keep='last')] # Ensure unique points per year
-            else:
-                logging.warning(f"Diluted EPS data not available for {stock.info.get('shortName', stock.ticker)}. Skipping EPS plot.")
-                annual_eps_for_plot = pd.Series() # Empty Series
-
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(28, 7))
-            color_eps = 'tab:red'
-            ax1.set_xlabel('Date')
-            ax1.set_ylabel('EPS', color=color_eps)
-            
-            if not annual_eps_for_plot.empty:
-                logging.debug(f"DEBUG: annual_eps_for_plot before TTM addition in _generate_eps_pe_plots: {annual_eps_for_plot}")
-                current_year = datetime.now().year
-                # Only add TTM EPS for the current year if it's not already in custom/annual data
-                if current_year not in annual_eps_for_plot.index.year and not np.isnan(self.ttm_eps_data['value']) and self.ttm_eps_data['date'] is not None:
-                    current_year_date = datetime(current_year, 7, 2) # Align to July 2nd
-                    ttm_series = pd.Series([self.ttm_eps_data['value']], index=[current_year_date])
-                    annual_eps_for_plot = pd.concat([annual_eps_for_plot, ttm_series]).sort_index().drop_duplicates(keep='last')
-
-                # Plot with markers and a line connecting the annual points
-                ax1.plot(annual_eps_for_plot.index, annual_eps_for_plot, marker='o', linestyle='-', color=color_eps)
-
-                # Generate tick locations for January 1st of each year represented in the data
-                years_in_data = annual_eps_for_plot.index.year.unique().sort_values()
-                yearly_ticks = [datetime(year, 1, 1) for year in years_in_data]
-
-                ax1.set_xticks(yearly_ticks)
-                ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-                # Ensure labels are centered visually
-                for label in ax1.get_xticklabels():
-                    label.set_horizontalalignment('center')
-
-                # Set x-axis limits to include some padding on both sides
-                padding_days = 180 # Roughly half a year on each side
-                start_date = hist.index.min() - pd.Timedelta(days=padding_days)
-                end_date = hist.index.max() + pd.Timedelta(days=padding_days)
-                ax1.set_xlim(start_date, end_date)
-            else:
-                ax1.text(0.5, 0.5, 'Diluted EPS data not available', horizontalalignment='center', verticalalignment='center', transform=ax1.transAxes, fontsize=12, color='red')
-
-            ax1.tick_params(axis='y', labelcolor=color_eps)
-            
-            color_price = 'tab:blue'
-            ax3 = ax1.twinx()
-            ax3.set_ylabel('Stock Price', color=color_price)
-            ax3.plot(hist.index, hist['Close'], color=color_price, label='Stock Price', linewidth=2.0)
-            ax3.tick_params(axis='y', labelcolor=color_price)
-            ax1.grid(True)
-            
-            ax2.set_title(f'{short_name} P/E Ratio Over Time')
-            ax2.set_xlabel('Date')
-            ax2.set_ylabel('P/E Ratio')
-            
-            # Use the daily P/E Ratio from hist for plotting
-            if 'P/E Ratio' in hist.columns and not hist['P/E Ratio'].empty and not hist['P/E Ratio'].isnull().all():
-                ax2.plot(hist.index, hist['P/E Ratio'], color='tab:orange', label='P/E Ratio')
-                ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m')) # Format as Year-Month
-                ax2.set_xlim(hist.index.min(), hist.index.max()) # Set limits to match price data range
-            else:
-                ax2.text(0.5, 0.5, 'P/E Ratio data not available', horizontalalignment='center', verticalalignment='center', transform=ax2.transAxes, fontsize=12, color='red')
-
-            ax2.grid(True)
-            fig.suptitle(f'{short_name} Financial Metrics Over Last 10 Years')
-            fig.tight_layout()
-            fig.subplots_adjust(top=0.88)
-            # fig.autofmt_xdate() # Auto-format to prevent labels from overlapping - Removed to allow manual control of label alignment
-            
-            # Save plot to a BytesIO object and embed as base64 in HTML
-            import io
-            import base64
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight')
-            buf.seek(0)
-            image_base64 = base64.b64encode(buf.read()).decode('utf-8')
-            plt.close(fig)
-            plot_html = f"<img src='data:image/png;base64,{image_base64}' alt='{short_name} Financial Metrics Plot'>"
-
-            return plot_html
-        except Exception as e:
-            logging.error(f"Error generating plots for {short_name}: {str(e)}")
-            return f"<p>Error generating financial metrics plots: {str(e)}</p>"
-
-    def run_analysis(self):
-        """Run analysis for all tickers with error handling"""
-        try:
-            if not self.tickers:
-                raise StockAnalyzerError("No tickers to analyze")
-
-            for ticker in self.tickers:
-                try:
-                    self.analyze_stock(ticker)
-                except Exception as e:
-                    logging.error(f"Error analyzing {ticker}: {str(e)}")
+        # Remove empty ticker entries
+        if not index[ticker]:
+            del index[ticker]
+    
+    if cleaned:
+        save_analyses_index(index)
+        return True
+    return False
+
+def build_user_export_zip(user_name=None):
+    """Build a ZIP export for the current user's analyses."""
+    if user_name is None:
+        user_name = get_user_name()
+    if not user_name:
+        return None, "User name is not set."
+
+    user_index = get_user_analyses_index(user_name)
+    if not user_index:
+        return None, "No analyses to export."
+
+    export_index = {}
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for ticker, analyses in user_index.items():
+            for analysis_id, analysis_info in analyses.items():
+                analysis_dir = ANALYSES_DIR / analysis_id
+                if not analysis_dir.exists():
                     continue
 
-            # Save report
+                # Export ALL files in the analysis directory (full backup)
+                for file_path in analysis_dir.rglob("*"):
+                    if file_path.is_file():
+                        rel_path = file_path.relative_to(analysis_dir)
+                        zf.write(file_path, arcname=f"{analysis_id}/{rel_path.as_posix()}")
+
+                export_index.setdefault(ticker, {})[analysis_id] = analysis_info
+
+        zf.writestr(
+            "analyses_index.json",
+            json.dumps(export_index, indent=2, ensure_ascii=False),
+        )
+        zf.writestr(
+            "export_meta.json",
+            json.dumps(
+                {
+                    "exported_at": datetime.now().isoformat(),
+                    "user_name": user_name,
+                    "user_key": normalize_user_key(user_name),
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+        )
+
+    buffer.seek(0)
+    filename = f"analyses_export_{normalize_user_key(user_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    return buffer.getvalue(), filename
+
+def _analysis_id_exists(index, analysis_id):
+    for ticker in index.keys():
+        if analysis_id in index[ticker]:
+            return True
+    return False
+
+def import_user_analyses_zip(uploaded_file, target_user_name=None):
+    """Import analyses from a ZIP export into the current user."""
+    if target_user_name is None:
+        target_user_name = get_user_name()
+    if not target_user_name:
+        return 0, 0, "User name is not set."
+
+    user_key = normalize_user_key(target_user_name)
+    if not user_key:
+        return 0, 0, "Invalid user name."
+
+    try:
+        data = uploaded_file.read()
+        buffer = io.BytesIO(data)
+        with zipfile.ZipFile(buffer, "r") as zf:
+            if "analyses_index.json" not in zf.namelist():
+                return 0, 0, "Invalid ZIP: missing analyses_index.json"
+
+            imported_index = json.loads(zf.read("analyses_index.json").decode("utf-8"))
+            current_index = load_analyses_index()
+
+            imported_count = 0
+            skipped_count = 0
+
+            for ticker, analyses in imported_index.items():
+                for analysis_id, analysis_info in analyses.items():
+                    # Ensure unique analysis_id
+                    new_id = analysis_id
+                    if _analysis_id_exists(current_index, new_id):
+                        suffix = 1
+                        while _analysis_id_exists(current_index, f"{analysis_id}_imported_{suffix}"):
+                            suffix += 1
+                        new_id = f"{analysis_id}_imported_{suffix}"
+
+                    # Extract files
+                    prefix = f"{analysis_id}/"
+                    files = [n for n in zf.namelist() if n.startswith(prefix)]
+                    if not files:
+                        skipped_count += 1
+                        continue
+
+                    dest_dir = ANALYSES_DIR / new_id
+                    dest_dir.mkdir(exist_ok=True, parents=True)
+
+                    for name in files:
+                        rel_name = name[len(prefix):]
+                        if not rel_name:
+                            continue
+                        dest_path = dest_dir / rel_name
+                        dest_path.parent.mkdir(parents=True, exist_ok=True)
+                        with zf.open(name) as src, open(dest_path, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+
+                    # Update index entry with current user info and new path/id
+                    analysis_info = dict(analysis_info)
+                    analysis_info["analysis_id"] = new_id
+                    analysis_info["path"] = str(dest_dir.absolute())
+                    analysis_info["user_name"] = target_user_name
+                    analysis_info["user_key"] = user_key
+                    analysis_info["user_id"] = get_user_id_from_name(user_key)
+
+                    current_index.setdefault(ticker, {})[new_id] = analysis_info
+                    imported_count += 1
+
+            if imported_count > 0:
+                save_analyses_index(current_index)
+
+            return imported_count, skipped_count, None
+    except Exception as e:
+        return 0, 0, f"Import failed: {e}"
+
+def save_analysis(ticker, company_name, valuation_summary, fig_es, fig_distribution_only, fig_sensitivity):
+    """Save an analysis to disk with error handling"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    analysis_id = f"{ticker}_{timestamp}"
+    analysis_dir = ANALYSES_DIR / analysis_id
+    
+    try:
+        # Create directory
+        analysis_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Save only the results plot
+        plot_path = analysis_dir / "results_plot.png"
+        fig_es.savefig(plot_path, dpi=150, bbox_inches='tight')
+        
+        # Save valuation summary as JSON
+        summary_path = analysis_dir / "valuation_summary.json"
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(valuation_summary, f, indent=2, ensure_ascii=False)
+        
+        # Verify files were saved
+        if not plot_path.exists() or not summary_path.exists():
+            raise IOError("Failed to save analysis files")
+        
+        # Update index with user information
+        user_name = get_user_name()
+        if not user_name:
+            raise ValueError("User name must be set before saving analyses")
+        
+        user_id = get_user_id()
+        user_key = get_user_key() or normalize_user_key(user_name)
+        index = load_analyses_index()
+        if ticker not in index:
+            index[ticker] = {}
+        index[ticker][analysis_id] = {
+            'company_name': company_name,
+            'timestamp': timestamp,
+            'date': valuation_summary['date'],
+            'analysis_id': analysis_id,
+            'path': str(analysis_dir.absolute()),  # Store absolute path
+            'user_id': user_id,              # deterministic from user_key
+            'user_key': user_key,            # case-insensitive match key
+            'user_name': user_name           # display name (backward compatible)
+        }
+        
+        if save_analyses_index(index):
+            return analysis_id
+        else:
+            raise Exception("Failed to save index")
+            
+    except Exception as e:
+        st.error(f"Error saving analysis: {e}")
+        # Clean up partial save
+        if analysis_dir.exists():
             try:
-                self.save_html_report()
-            except Exception as e:
-                logging.error(f"Error saving HTML report: {str(e)}")
+                shutil.rmtree(analysis_dir)
+            except:
+                pass
+        return None
 
-        except Exception as e:
-            logging.error(f"Error in run_analysis: {str(e)}")
+def load_analysis(analysis_id):
+    """Load a saved analysis with error handling"""
+    analysis_dir = ANALYSES_DIR / analysis_id
+    if not analysis_dir.exists():
+        return None
+    
+    try:
+        # Load valuation summary
+        summary_file = analysis_dir / "valuation_summary.json"
+        if not summary_file.exists():
+            return None
+        
+        with open(summary_file, 'r', encoding='utf-8') as f:
+            valuation_summary = json.load(f)
+        
+        # Load results plot
+        results_plot_path = analysis_dir / "results_plot.png"
+        if not results_plot_path.exists():
+            return None
+        
+        return {
+            'valuation_summary': valuation_summary,
+            'results_plot': results_plot_path
+        }
+    except Exception as e:
+        st.error(f"Error loading analysis {analysis_id}: {e}")
+        return None
 
-    def save_html_report(self):
-        """Save HTML report with error handling"""
+def delete_analysis(analysis_id):
+    """Delete an analysis from disk and index (only if owned by current user)"""
+    user_key = get_user_key()
+    if not user_key:
+        return
+    
+    index = load_analyses_index()
+    
+    # Find and remove from index (only if owned by current user)
+    for ticker in list(index.keys()):
+        if analysis_id in index[ticker]:
+            analysis_info = index[ticker][analysis_id]
+            # Verify ownership by user_key (case-insensitive, backward compatible)
+            info_key = analysis_info.get("user_key") or normalize_user_key(analysis_info.get("user_name", ""))
+            if info_key == user_key:
+                del index[ticker][analysis_id]
+                # Remove ticker entry if no analyses left
+                if not index[ticker]:
+                    del index[ticker]
+                
+                # Save updated index
+                save_analyses_index(index)
+                
+                # Delete analysis directory
+                analysis_dir = ANALYSES_DIR / analysis_id
+                if analysis_dir.exists():
+                    shutil.rmtree(analysis_dir)
+                
+                # Clear selected analysis if it was the deleted one
+                if st.session_state.get('selected_analysis') == analysis_id:
+                    st.session_state.selected_analysis = None
+                break
+
+def display_saved_analyses():
+    """Display the saved analyses organized by ticker (for current user only)"""
+    # Check if user is set
+    user_name = get_user_name()
+    user_key = get_user_key()
+    if not user_key or not st.session_state.get('user_initialized'):
+        st.warning("⚠️ Please set your user name at the top of the page to view your analyses.")
+        return
+    
+    st.header("Performed Analyses")
+    
+    # Show storage info
+    with st.expander("ℹ️ About Analysis Storage", expanded=False):
+        st.info(f"""
+        **Storage Location:** Analyses are saved to: `{ANALYSES_DIR.absolute()}`
+        
+        **User Isolation:**
+        - Each user has their own separate analyses section
+        - Analyses are tagged with your user name: **{user_name}** (matching is case-insensitive)
+        - You can only see and manage your own analyses
+        - Entering the same name (e.g., Juan/juan) will retrieve the same analyses
+        
+        **Persistence:**
+        - **Local deployment:** Analyses persist across app restarts
+        - **Streamlit Cloud:** Files may be cleared after app restarts or inactivity periods
+        - **Recommendation:** Download important analyses or export data for permanent storage
+        
+        **What's Saved:**
+        - Results plot (PNG image)
+        - Valuation summary (JSON with all parameters and results)
+        - Analysis metadata (timestamp, company name, user name, etc.)
+        """)
+
+    with st.expander("⬇️ Export / Import Analyses (Full Backup)", expanded=False):
+        export_bytes, export_name = build_user_export_zip()
+        if export_bytes:
+            st.download_button(
+                "Download ZIP",
+                data=export_bytes,
+                file_name=export_name,
+                mime="application/zip",
+            )
+        else:
+            st.info("No analyses to export for this user.")
+
+        uploaded = st.file_uploader(
+            "Import analyses ZIP",
+            type=["zip"],
+            key="analyses_zip_import",
+            help="Upload a ZIP exported from this app to restore analyses and keep your history.",
+        )
+        if st.button("Import ZIP", key="import_zip_btn"):
+            if not uploaded:
+                st.error("Please choose a ZIP file to import.")
+            else:
+                with st.spinner("Importing analyses..."):
+                    imported, skipped, err = import_user_analyses_zip(uploaded, get_user_name())
+                if err:
+                    st.error(err)
+                else:
+                    msg = f"✅ Imported {imported} analyses."
+                    if skipped > 0:
+                        msg += f" Skipped {skipped} entries with missing files."
+                    st.success(msg)
+                    st.rerun()
+    
+    # Clean up orphaned entries (analyses in index but files missing) for current user
+    cleanup_orphaned_analyses()
+    
+    # Get only current user's analyses
+    index = get_user_analyses_index()
+    
+    if not index:
+        st.info(f"No analyses have been performed yet. Run a simulation to save your first analysis.")
+        st.caption(f"Currently logged in as: **{user_name}**")
+        return
+    
+    # Show current user indicator
+    user_analyses_count = count_user_analyses(user_name)
+    st.caption(f"👤 Showing analyses for: **{user_name}** ({user_analyses_count} analyses)")
+    
+    # Initialize session state for selected analysis
+    if 'selected_analysis' not in st.session_state:
+        st.session_state.selected_analysis = None
+    
+    # Check if an analysis was deleted
+    if 'delete_analysis_id' in st.session_state:
+        delete_analysis(st.session_state.delete_analysis_id)
+        del st.session_state.delete_analysis_id
+        st.rerun()
+    
+    # Display analyses organized by company name (sorted) with View and Delete buttons
+    ticker_entries = []
+    for ticker, analyses in index.items():
+        first_info = next(iter(analyses.values()))
+        company_name = first_info.get("company_name", ticker)
+        ticker_entries.append((company_name, ticker))
+
+    for company_name, ticker in sorted(ticker_entries, key=lambda x: x[0].casefold()):
+        analyses = index[ticker]
+        
+        with st.expander(f"📊 {ticker} - {company_name} ({len(analyses)} {'analyses' if len(analyses) > 1 else 'analysis'})"):
+            # Sort analyses by timestamp (newest first)
+            sorted_analyses = sorted(analyses.items(), key=lambda x: x[1]['timestamp'], reverse=True)
+            
+            for analysis_id, analysis_info in sorted_analyses:
+                date_str = analysis_info['date']
+                timestamp_str = analysis_info['timestamp']
+                # Format timestamp for display
+                try:
+                    dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                    formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    formatted_time = timestamp_str
+                
+                # Validate files exist
+                files_exist = validate_analysis_files(analysis_id)
+                
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    status_icon = "⚠️" if not files_exist else ""
+                    st.write(f"{status_icon} **Date:** {date_str} | **Time:** {formatted_time}")
+                    if not files_exist:
+                        st.caption("⚠️ Analysis files not found (may have been cleared)")
+                with col2:
+                    if files_exist:
+                        if st.button("View", key=f"view_{analysis_id}"):
+                            st.session_state.selected_analysis = analysis_id
+                            st.session_state.active_tab = "Performed Analyses"
+                            # Set query param to persist tab selection
+                            st.query_params.tab = "performed"
+                            # Clear the radio button state to force it to use our index on rerun
+                            # This is critical when viewing from within a newly submitted analysis
+                            if 'tab_selector' in st.session_state:
+                                del st.session_state.tab_selector
+                            st.rerun()
+                    else:
+                        st.caption("Unavailable")
+                with col3:
+                    if st.button("🗑️ Delete", key=f"delete_{analysis_id}"):
+                        st.session_state.delete_analysis_id = analysis_id
+                        st.rerun()
+    
+    # Display selected analysis
+    if st.session_state.selected_analysis:
+        st.markdown("---")
+        st.subheader("Selected Analysis")
+        display_analysis(st.session_state.selected_analysis)
+
+def display_analysis(analysis_id):
+    """Display a saved analysis"""
+    analysis = load_analysis(analysis_id)
+    if not analysis:
+        st.error(f"Analysis not found: {analysis_id}")
+        return
+    
+    # Verify files exist
+    if not Path(analysis['results_plot']).exists():
+        st.error(f"Results plot file not found for analysis: {analysis_id}")
+        return
+    
+    valuation_summary = analysis['valuation_summary']
+    
+    # Display results plot
+    st.image(str(analysis['results_plot']), caption="Results Plot", use_container_width=True)
+    
+    # Display summary
+    st.markdown("### Valuation Summary")
+    sum_col1, sum_col2 = st.columns(2)
+    
+    with sum_col1:
+        st.markdown(f"""
+            <div class="summary-text">
+            <p><strong>Current Price:</strong> {valuation_summary['current_price']}<br>
+            <strong>Mean Value:</strong> {valuation_summary['mean_value']}<br>
+            <strong>Median Value:</strong> {valuation_summary['median_value']}<br>
+            <strong>Upside Potential:</strong> {valuation_summary['upside_potential']}</p>
+            
+            <p><strong>Probabilities:</strong><br>
+            Overvaluation: {valuation_summary['prob_overvalued']}<br>
+            Undervaluation: {valuation_summary['prob_undervalued']}</p>
+            
+            <p><strong>Risk Metrics:</strong><br>
+            VaR 95%: {valuation_summary['VaR 95%']}<br>
+            CVaR 95%: {valuation_summary['CVaR 95%']}<br>
+            Std. Deviation: {valuation_summary['Std. Deviation']}</p>
+            </div>
+        """, unsafe_allow_html=True)
+    
+    with sum_col2:
+        st.markdown(f"""
+            <div class="summary-text">
+            <p><strong>Variable Parameters:</strong><br>
+            Growth 5y: {valuation_summary['Variable Parameters']['Growth 5y']}<br>
+            Growth 5-10y: {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>
+            WACC: {valuation_summary['Variable Parameters']['WACC']}<br>
+            Risk Premium: {valuation_summary['Variable Parameters']['Risk Premium']}<br>
+            Risk Free Rate: {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>
+            Reinvestment 5y: {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
+            Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
+            
+            <p><strong>Terminal Value Params:</strong><br>
+            Term. Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
+            Term. WACC: {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
+            Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+st.title("Intrinsic Valuation Tool. DCF Monte Carlo Simulation")
+
+# --- USER IDENTIFICATION (MUST BE SET FIRST) ---
+st.markdown("---")
+st.subheader("👤 User Identification")
+
+if 'user_initialized' not in st.session_state:
+    st.session_state.user_initialized = False
+
+# A user is considered logged in if we have a non-empty user_key.
+user_is_initialized = bool(get_user_key())
+
+if not user_is_initialized:
+    # Robust login: neutral by default.
+    # If the typed name has saved analyses, we show a warning + "Continue anyway".
+    # Otherwise we show a normal "Continue" for a new user.
+    user_input = st.text_input(
+        "Enter your name/identifier:",
+        key="user_name_input",
+        help="Use the same name each time to retrieve your saved analyses. Matching is case-insensitive (Juan == juan).",
+        placeholder="e.g., Juan"
+    )
+
+    typed_name = (user_input or "").strip()
+    existing_count = count_user_analyses(typed_name) if typed_name else 0
+    has_existing_analyses = existing_count > 0
+
+    if has_existing_analyses:
+        st.warning(f"⚠️ The name '{typed_name}' already has saved analyses.")
+        st.info("💡 If this is your user and you want to log in and load your saved analyses, click **Continue anyway**.")
+        proceed = st.button("Continue anyway", type="primary", key="login_continue_anyway")
+    else:
+        proceed = st.button("Continue", type="primary", key="login_continue")
+
+    if proceed:
+        if not typed_name:
+            st.error("Please enter a valid name.")
+        else:
+            set_user_name(typed_name)
+            n = count_user_analyses(typed_name)
+            if n > 0:
+                st.success(f"✅ Welcome back, {get_user_name()}! Loaded {n} saved analyses.")
+            else:
+                st.success(f"✅ User set to: {get_user_name()}")
+            st.rerun()
+else:
+    current_user = get_user_name()
+    user_analyses_count = count_user_analyses(current_user)
+
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.info(
+            f"👤 **Current User:** {current_user}"
+            + (f" ({user_analyses_count} analyses)" if user_analyses_count > 0 else "")
+        )
+    with col2:
+        if st.button("Change User", key="change_user_btn"):
+            st.session_state.user_initialized = False
+            st.session_state.user_name = None
+            st.session_state.user_key = None
+            st.session_state.user_id = None
+            st.rerun()
+    with col3:
+        if st.button("Logout", key="logout_btn"):
+            st.session_state.user_initialized = False
+            st.session_state.user_name = None
+            st.session_state.user_key = None
+            st.session_state.user_id = None
+            st.rerun()
+
+st.markdown("---")
+
+# --- TICKER SEARCH FUNCTIONALITY ---
+@st.cache_data(ttl=86400)  # Cache for 24 hours
+def get_ticker_database():
+    """Get a comprehensive list of major world stocks"""
+    return {
+        # US Stocks
+        'AAPL': 'Apple Inc.',
+        'GOOGL': 'Alphabet Inc. (Class A)',
+        'GOOG': 'Alphabet Inc. (Class C)',
+        'MSFT': 'Microsoft Corporation',
+        'AMZN': 'Amazon.com Inc.',
+        'META': 'Meta Platforms Inc.',
+        'TSLA': 'Tesla Inc.',
+        'NVDA': 'NVIDIA Corporation',
+        'JPM': 'JPMorgan Chase & Co.',
+        'V': 'Visa Inc.',
+        'JNJ': 'Johnson & Johnson',
+        'WMT': 'Walmart Inc.',
+        'MA': 'Mastercard Inc.',
+        'PG': 'Procter & Gamble',
+        'UNH': 'UnitedHealth Group',
+        'HD': 'The Home Depot',
+        'DIS': 'The Walt Disney Company',
+        'BAC': 'Bank of America',
+        'XOM': 'Exxon Mobil',
+        'CVX': 'Chevron Corporation',
+        'ABBV': 'AbbVie Inc.',
+        'PFE': 'Pfizer Inc.',
+        'AVGO': 'Broadcom Inc.',
+        'COST': 'Costco Wholesale',
+        'MRK': 'Merck & Co.',
+        'ABT': 'Abbott Laboratories',
+        'TMO': 'Thermo Fisher Scientific',
+        'ACN': 'Accenture',
+        'CSCO': 'Cisco Systems',
+        'NFLX': 'Netflix Inc.',
+        'AMD': 'Advanced Micro Devices',
+        'INTC': 'Intel Corporation',
+        'CMCSA': 'Comcast Corporation',
+        'ADBE': 'Adobe Inc.',
+        'NKE': 'Nike Inc.',
+        'TXN': 'Texas Instruments',
+        'QCOM': 'Qualcomm Inc.',
+        'HON': 'Honeywell International',
+        'AMGN': 'Amgen Inc.',
+        'SBUX': 'Starbucks Corporation',
+        'GILD': 'Gilead Sciences',
+        'MDT': 'Medtronic',
+        'ISRG': 'Intuitive Surgical',
+        'VZ': 'Verizon Communications',
+        'LMT': 'Lockheed Martin',
+        'RTX': 'Raytheon Technologies',
+        'UPS': 'United Parcel Service',
+        'BMY': 'Bristol-Myers Squibb',
+        'PM': 'Philip Morris International',
+        'T': 'AT&T Inc.',
+        'DE': 'Deere & Company',
+        'CAT': 'Caterpillar Inc.',
+        'GS': 'Goldman Sachs',
+        'MS': 'Morgan Stanley',
+        'BLK': 'BlackRock',
+        'AXP': 'American Express',
+        'SPGI': 'S&P Global',
+        'INTU': 'Intuit Inc.',
+        'BKNG': 'Booking Holdings',
+        'ADI': 'Analog Devices',
+        'AMAT': 'Applied Materials',
+        'KLAC': 'KLA Corporation',
+        'LRCX': 'Lam Research',
+        'CDNS': 'Cadence Design Systems',
+        'SNPS': 'Synopsys',
+        'CRWD': 'CrowdStrike',
+        'PANW': 'Palo Alto Networks',
+        'FTNT': 'Fortinet',
+        'ZS': 'Zscaler',
+        'NET': 'Cloudflare',
+        'DDOG': 'Datadog',
+        'MDB': 'MongoDB',
+        'NOW': 'ServiceNow',
+        'TEAM': 'Atlassian',
+        'WDAY': 'Workday',
+        'VEEV': 'Veeva Systems',
+        'ZM': 'Zoom Video Communications',
+        'DOCN': 'DigitalOcean',
+        'GTLB': 'GitLab',
+        'ESTC': 'Elastic',
+        'FROG': 'JFrog',
+        'PATH': 'UiPath',
+        'BILL': 'Bill.com',
+        'COUP': 'Coupa Software',
+        'OKTA': 'Okta',
+        'SPLK': 'Splunk',
+        'QLYS': 'Qualys',
+        'RPD': 'Rapid7',
+        'TENB': 'Tenable',
+        'VRNS': 'Varonis Systems',
+        'RDWR': 'Radware',
+        'CHKP': 'Check Point Software',
+        'QLYS': 'Qualys',
+        'RDWR': 'Radware',
+        'CHKP': 'Check Point Software',
+        'FTNT': 'Fortinet',
+        'ZS': 'Zscaler',
+        'NET': 'Cloudflare',
+        'DDOG': 'Datadog',
+        'MDB': 'MongoDB',
+        'NOW': 'ServiceNow',
+        'TEAM': 'Atlassian',
+        'WDAY': 'Workday',
+        'VEEV': 'Veeva Systems',
+        'ZM': 'Zoom Video Communications',
+        'DOCN': 'DigitalOcean',
+        'GTLB': 'GitLab',
+        'ESTC': 'Elastic',
+        'FROG': 'JFrog',
+        'PATH': 'UiPath',
+        'BILL': 'Bill.com',
+        'COUP': 'Coupa Software',
+        'OKTA': 'Okta',
+        'SPLK': 'Splunk',
+        'QLYS': 'Qualys',
+        'RPD': 'Rapid7',
+        'TENB': 'Tenable',
+        'VRNS': 'Varonis Systems',
+        'RDWR': 'Radware',
+        'CHKP': 'Check Point Software',
+        # European Stocks
+        'NVO': 'Novo Nordisk A/S',
+        'NVO.CO': 'Novo Nordisk A/S (Copenhagen)',
+        'ASML': 'ASML Holding N.V.',
+        'ASML.AS': 'ASML Holding (Amsterdam)',
+        'SAP': 'SAP SE',
+        'SAP.DE': 'SAP SE (Germany)',
+        'SHEL': 'Shell plc',
+        'SHEL.L': 'Shell plc (London)',
+        'BP': 'BP p.l.c.',
+        'BP.L': 'BP p.l.c. (London)',
+        'GSK': 'GSK plc',
+        'GSK.L': 'GSK plc (London)',
+        'AZN': 'AstraZeneca',
+        'AZN.L': 'AstraZeneca (London)',
+        'UL': 'Unilever',
+        'ULVR.L': 'Unilever (London)',
+        'DEO': 'Diageo',
+        'DEO.L': 'Diageo (London)',
+        'RDS-A': 'Royal Dutch Shell',
+        'RDS-B': 'Royal Dutch Shell',
+        'BTI': 'British American Tobacco',
+        'BTI.L': 'British American Tobacco (London)',
+        'RIO': 'Rio Tinto',
+        'RIO.L': 'Rio Tinto (London)',
+        'BHP': 'BHP Group',
+        'BHP.L': 'BHP Group (London)',
+        'GLEN.L': 'Glencore (London)',
+        'NG': 'National Grid',
+        'NG.L': 'National Grid (London)',
+        'VOD': 'Vodafone',
+        'VOD.L': 'Vodafone (London)',
+        'TSCO.L': 'Tesco (London)',
+        'SBRY.L': 'Sainsbury\'s (London)',
+        'MKS.L': 'Marks & Spencer (London)',
+        'NXT.L': 'Next (London)',
+        'JD.L': 'JD Sports (London)',
+        'FRES.L': 'Fresnillo (London)',
+        'POLY.L': 'Polymetal (London)',
+        'AAL.L': 'Anglo American (London)',
+        'ANTO.L': 'Antofagasta (London)',
+        'EVR.L': 'Evercore (London)',
+        'FERG.L': 'Ferguson (London)',
+        'FOUR.L': '4imprint (London)',
+        'GFTU.L': 'Grafton (London)',
+        'HWDN.L': 'Howden Joinery (London)',
+        'IHG.L': 'InterContinental Hotels (London)',
+        'JD.L': 'JD Sports Fashion (London)',
+        'KGF.L': 'Kingfisher (London)',
+        'LAND.L': 'Land Securities (London)',
+        'LGEN.L': 'Legal & General (London)',
+        'LLOY.L': 'Lloyds Banking (London)',
+        'MKS.L': 'Marks & Spencer (London)',
+        'NXT.L': 'Next (London)',
+        'OCDO.L': 'Ocado (London)',
+        'PSN.L': 'Persimmon (London)',
+        'RTO.L': 'Rentokil Initial (London)',
+        'SBRY.L': 'Sainsbury\'s (London)',
+        'SGE.L': 'Sage Group (London)',
+        'SGRO.L': 'Segro (London)',
+        'SN.L': 'Smith & Nephew (London)',
+        'SPX.L': 'Spirax-Sarco Engineering (London)',
+        'SSE.L': 'SSE (London)',
+        'STAN.L': 'Standard Chartered (London)',
+        'STJ.L': 'St. James\'s Place (London)',
+        'SVT.L': 'Severn Trent (London)',
+        'TSCO.L': 'Tesco (London)',
+        'TW.L': 'Taylor Wimpey (London)',
+        'ULVR.L': 'Unilever (London)',
+        'VOD.L': 'Vodafone (London)',
+        'WEIR.L': 'Weir Group (London)',
+        'WTB.L': 'Whitbread (London)',
+        # Asian Stocks
+        'TSM': 'Taiwan Semiconductor',
+        'TSM.TW': 'Taiwan Semiconductor (Taiwan)',
+        'BABA': 'Alibaba Group',
+        'BABA.HK': 'Alibaba Group (Hong Kong)',
+        'JD': 'JD.com',
+        'JD.HK': 'JD.com (Hong Kong)',
+        'PDD': 'Pinduoduo',
+        'PDD.HK': 'Pinduoduo (Hong Kong)',
+        'BIDU': 'Baidu',
+        'BIDU.HK': 'Baidu (Hong Kong)',
+        'NIO': 'NIO Inc.',
+        'NIO.HK': 'NIO Inc. (Hong Kong)',
+        'XPEV': 'XPeng',
+        'XPEV.HK': 'XPeng (Hong Kong)',
+        'LI': 'Li Auto',
+        'LI.HK': 'Li Auto (Hong Kong)',
+        'TME': 'Tencent Music',
+        'TME.HK': 'Tencent Music (Hong Kong)',
+        'NTES': 'NetEase',
+        'NTES.HK': 'NetEase (Hong Kong)',
+        'WB': 'Weibo',
+        'WB.HK': 'Weibo (Hong Kong)',
+        'DOYU': 'DouYu',
+        'DOYU.HK': 'DouYu (Hong Kong)',
+        'HUYA': 'Huya',
+        'HUYA.HK': 'Huya (Hong Kong)',
+        'YY': 'YY Inc.',
+        'YY.HK': 'YY Inc. (Hong Kong)',
+        'VIPS': 'Vipshop',
+        'VIPS.HK': 'Vipshop (Hong Kong)',
+        'WB': 'Weibo',
+        'WB.HK': 'Weibo (Hong Kong)',
+        # Canadian Stocks
+        'SHOP': 'Shopify',
+        'SHOP.TO': 'Shopify (Toronto)',
+        'RY': 'Royal Bank of Canada',
+        'RY.TO': 'Royal Bank of Canada (Toronto)',
+        'TD': 'TD Bank',
+        'TD.TO': 'TD Bank (Toronto)',
+        'BNS': 'Bank of Nova Scotia',
+        'BNS.TO': 'Bank of Nova Scotia (Toronto)',
+        'BMO': 'Bank of Montreal',
+        'BMO.TO': 'Bank of Montreal (Toronto)',
+        'CM': 'Canadian Imperial Bank',
+        'CM.TO': 'Canadian Imperial Bank (Toronto)',
+        'ENB': 'Enbridge',
+        'ENB.TO': 'Enbridge (Toronto)',
+        'TRP': 'TC Energy',
+        'TRP.TO': 'TC Energy (Toronto)',
+        'CP': 'Canadian Pacific',
+        'CP.TO': 'Canadian Pacific (Toronto)',
+        'CNR': 'Canadian National Railway',
+        'CNR.TO': 'Canadian National Railway (Toronto)',
+        'ATD': 'Alimentation Couche-Tard',
+        'ATD.TO': 'Alimentation Couche-Tard (Toronto)',
+        'WCN': 'Waste Connections',
+        'WCN.TO': 'Waste Connections (Toronto)',
+        'FNV': 'Franco-Nevada',
+        'FNV.TO': 'Franco-Nevada (Toronto)',
+        'WPM': 'Wheaton Precious Metals',
+        'WPM.TO': 'Wheaton Precious Metals (Toronto)',
+        'NTR': 'Nutrien',
+        'NTR.TO': 'Nutrien (Toronto)',
+        'SU': 'Suncor Energy',
+        'SU.TO': 'Suncor Energy (Toronto)',
+        'IMO': 'Imperial Oil',
+        'IMO.TO': 'Imperial Oil (Toronto)',
+        'CVE': 'Cenovus Energy',
+        'CVE.TO': 'Cenovus Energy (Toronto)',
+        'MEG': 'MEG Energy',
+        'MEG.TO': 'MEG Energy (Toronto)',
+        'TOU': 'Tourmaline Oil',
+        'TOU.TO': 'Tourmaline Oil (Toronto)',
+        'ARX': 'ARC Resources',
+        'ARX.TO': 'ARC Resources (Toronto)',
+        'PPL': 'Pembina Pipeline',
+        'PPL.TO': 'Pembina Pipeline (Toronto)',
+        'KEY': 'Keyera',
+        'KEY.TO': 'Keyera (Toronto)',
+        'IPL': 'Inter Pipeline',
+        'IPL.TO': 'Inter Pipeline (Toronto)',
+        'PXT': 'Parex Resources',
+        'PXT.TO': 'Parex Resources (Toronto)',
+        'VET': 'Vermilion Energy',
+        'VET.TO': 'Vermilion Energy (Toronto)',
+        'BAY': 'Baytex Energy',
+        'BAY.TO': 'Baytex Energy (Toronto)',
+        'CR': 'Crew Energy',
+        'CR.TO': 'Crew Energy (Toronto)',
+        'GTE': 'Gran Tierra Energy',
+        'GTE.TO': 'Gran Tierra Energy (Toronto)',
+        'TVE': 'Tamarack Valley Energy',
+        'TVE.TO': 'Tamarack Valley Energy (Toronto)',
+        'WCP': 'Whitecap Resources',
+        'WCP.TO': 'Whitecap Resources (Toronto)',
+        'TOU': 'Tourmaline Oil',
+        'TOU.TO': 'Tourmaline Oil (Toronto)',
+        'ARX': 'ARC Resources',
+        'ARX.TO': 'ARC Resources (Toronto)',
+        'PPL': 'Pembina Pipeline',
+        'PPL.TO': 'Pembina Pipeline (Toronto)',
+        'KEY': 'Keyera',
+        'KEY.TO': 'Keyera (Toronto)',
+        'IPL': 'Inter Pipeline',
+        'IPL.TO': 'Inter Pipeline (Toronto)',
+        'PXT': 'Parex Resources',
+        'PXT.TO': 'Parex Resources (Toronto)',
+        'VET': 'Vermilion Energy',
+        'VET.TO': 'Vermilion Energy (Toronto)',
+        'BAY': 'Baytex Energy',
+        'BAY.TO': 'Baytex Energy (Toronto)',
+        'CR': 'Crew Energy',
+        'CR.TO': 'Crew Energy (Toronto)',
+        'GTE': 'Gran Tierra Energy',
+        'GTE.TO': 'Gran Tierra Energy (Toronto)',
+        'TVE': 'Tamarack Valley Energy',
+        'TVE.TO': 'Tamarack Valley Energy (Toronto)',
+        'WCP': 'Whitecap Resources',
+        'WCP.TO': 'Whitecap Resources (Toronto)',
+    }
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def search_tickers(query):
+    """Search for ticker symbols using ticker database"""
+    if not query or len(query) < 1:
+        return []
+    
+    results = []
+    query_upper = query.upper()
+    ticker_db = get_ticker_database()
+    
+    # Search through database
+    for ticker, name in ticker_db.items():
+        if query_upper in ticker.upper() or query_upper in name.upper():
+            results.append({
+                'ticker': ticker,
+                'name': name,
+                'exchange': ''
+            })
+    
+    # Try to validate ticker by attempting to fetch info (for tickers not in database)
+    if len(results) < 5 and len(query_upper) >= 1:
+        # Try the query as a ticker directly
         try:
-            self.html_report += "</body></html>"
+            tk = yf.Ticker(query_upper)
+            info = tk.info
+            if info and len(info) > 0:
+                name = info.get('longName') or info.get('shortName') or query_upper
+                results.insert(0, {
+                    'ticker': query_upper,
+                    'name': name,
+                    'exchange': info.get('exchange', '')
+                })
+        except:
+            pass
+    
+    # Remove duplicates
+    seen = set()
+    unique_results = []
+    for r in results:
+        if r['ticker'] not in seen:
+            seen.add(r['ticker'])
+            unique_results.append(r)
+    
+    return unique_results[:20]  # Limit to 20 results
+
+# --- LÓGICA DE RECUPERACIÓN ---
+def fetch_data(ticker, target_curr):
+    """
+    Fetch financial data for a ticker using yfinance.
+    Returns a dict with price, shares, cash, ebit, debt or None if failed.
+    """
+    import time
+    
+    # Clean the ticker
+    ticker = ticker.strip().upper()
+    if not ticker:
+        return None
+    
+    # Try different ticker formats (some stocks need exchange suffixes)
+    ticker_variants = [ticker]
+    
+    # Common exchange suffixes to try (only if ticker doesn't already have an exchange suffix)
+    if "." not in ticker and len(ticker) <= 5:
+        ticker_variants.extend([
+            f"{ticker}.CO",  # Copenhagen (e.g., NVO.CO for Novo Nordisk)
+            f"{ticker}.TO",  # Toronto
+            f"{ticker}.L",   # London
+            f"{ticker}.ST",  # Stockholm
+            f"{ticker}.DE",  # Germany
+            f"{ticker}.PA",  # Paris
+            f"{ticker}.AS",  # Amsterdam
+        ])
+    
+    last_error = None
+    for ticker_to_try in ticker_variants:
+        try:
+            # Create ticker object
+            tk = yf.Ticker(ticker_to_try)
             
-            # Create output directory if it doesn't exist
-            output_dir = "stock_analysis_output"
-            os.makedirs(output_dir, exist_ok=True)
+            # First, try to get price from history (more reliable)
+            price_from_history = None
+            try:
+                hist = tk.history(period="5d")
+                if not hist.empty and len(hist) > 0:
+                    price_from_history = float(hist['Close'].iloc[-1])
+            except:
+                pass
             
-            # Generate filename with current date
-            current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
-            report_filename = f"stock_report_{current_date}.html"
-            report_path = os.path.join(output_dir, report_filename)
+            # Try to get info - this can sometimes fail or return empty dict
+            # Add a small delay to avoid rate limiting
+            time.sleep(0.1)
+            info = None
+            try:
+                info = tk.info
+            except:
+                # If info fails, we can still use history data
+                if price_from_history and price_from_history > 0:
+                    # Return minimal data with price from history
+                    return {
+                        "price": price_from_history,
+                        "shares": 1e9,  # Default
+                        "cash": 0,
+                        "ebit": 0,
+                        "debt": 0,
+                    }
+                continue
             
-            # Clean up old reports (keep only the last 5)
-            old_reports = sorted([f for f in os.listdir(output_dir) if f.startswith("stock_report_") and f.endswith(".html")])
-            if len(old_reports) > 5:
-                for old_report in old_reports[:-5]:  # Keep the 5 most recent reports
+            # If info is empty or invalid, try fast_info as fallback
+            if not info or (isinstance(info, dict) and len(info) < 5):
+                try:
+                    fast_info = tk.fast_info
+                    if fast_info:
+                        # Merge fast_info into info if available
+                        if isinstance(info, dict):
+                            info.update(fast_info)
+                        else:
+                            info = fast_info
+                except:
+                    pass
+            
+            # Check if info is valid - sometimes yfinance returns empty dict or dict with error
+            if not info:
+                continue
+                
+            # Check for common error indicators in yfinance response
+            if isinstance(info, dict):
+                # Check for explicit error fields
+                if 'error' in info or 'Error' in info:
+                    continue
+                    
+                # Check if we have at least some basic info (but be lenient - some tickers have minimal data)
+                if len(info) < 3:
+                    continue
+                    
+                # Check for quoteType to ensure it's a valid security
+                # But don't fail if it's missing - some exchanges don't provide this
+                if 'quoteType' in info and info.get('quoteType') == 'NONE':
+                    continue
+            
+            # Try to get price - use history first if available, then try info fields
+            price = price_from_history
+            
+            if price is None or price <= 0:
+                # Try info fields
+                price_fields = [
+                    "currentPrice",
+                    "regularMarketPrice", 
+                    "previousClose",
+                    "regularMarketPreviousClose",
+                    "open",
+                    "ask",
+                    "bid",
+                    "lastPrice"
+                ]
+                
+                for field in price_fields:
+                    if info and field in info and info[field] is not None:
+                        price_val = info[field]
+                        if isinstance(price_val, (int, float)) and price_val > 0:
+                            price = float(price_val)
+                            break
+            
+            # Final fallback: try history again if we still don't have price
+            if (price is None or price <= 0) and not price_from_history:
+                try:
+                    hist = tk.history(period="1d")
+                    if not hist.empty and len(hist) > 0:
+                        price = float(hist['Close'].iloc[-1])
+                except:
+                    pass
+            
+            if price is None or price <= 0:
+                continue
+            
+            # Get currency
+            native_curr = info.get("currency", "USD")
+            if not native_curr:
+                native_curr = "USD"
+            
+            # Get shares outstanding - try multiple methods
+            shares = None
+            
+            # Method 1: Direct field
+            shares_fields = [
+                "sharesOutstanding",
+                "impliedSharesOutstanding", 
+                "sharesShort",
+                "floatShares",
+                "sharesShortPriorMonth"
+            ]
+            
+            for field in shares_fields:
+                if field in info and info[field] is not None:
+                    shares_val = info[field]
+                    if isinstance(shares_val, (int, float)) and shares_val > 0:
+                        shares = float(shares_val)
+                        break
+            
+            # Method 2: Calculate from market cap
+            if shares is None or shares <= 0:
+                market_cap = info.get("marketCap") or info.get("enterpriseValue")
+                if market_cap and isinstance(market_cap, (int, float)) and market_cap > 0 and price > 0:
+                    shares = float(market_cap) / price
+            
+            # Method 3: Use shares outstanding from financials
+            if (shares is None or shares <= 0) and 'sharesOutstanding' in info:
+                shares_val = info['sharesOutstanding']
+                if isinstance(shares_val, (int, float)) and shares_val > 0:
+                    shares = float(shares_val)
+            
+            # If shares still not found, use a default or calculate from market cap
+            if shares is None or shares <= 0:
+                # Try one more time with marketCap
+                market_cap = info.get("marketCap")
+                if market_cap and price > 0:
+                    shares = market_cap / price
+                # If still no shares, use a default (user can adjust)
+                if shares is None or shares <= 0:
+                    # Default to 1 billion shares if we can't determine
+                    shares = 1e9
+            
+            # Get cash - try multiple fields
+            cash = 0
+            cash_fields = ["totalCash", "totalCashPerShare", "cash", "cashAndCashEquivalents"]
+            for field in cash_fields:
+                if field in info and info[field] is not None:
+                    cash_val = info[field]
+                    if isinstance(cash_val, (int, float)) and cash_val >= 0:
+                        if "PerShare" in field and shares > 0:
+                            cash = float(cash_val) * shares
+                        else:
+                            cash = float(cash_val)
+                        break
+            
+            # Get EBITDA/Operating Income
+            ebitda = 0
+            ebitda_fields = ["ebitda", "operatingIncome", "ebit", "operatingCashflow"]
+            for field in ebitda_fields:
+                if field in info and info[field] is not None:
+                    ebitda_val = info[field]
+                    if isinstance(ebitda_val, (int, float)):
+                        ebitda = float(ebitda_val)
+                        break
+            
+            # Get debt
+            debt = 0
+            debt_fields = ["totalDebt", "totalDebt", "longTermDebt", "debt"]
+            for field in debt_fields:
+                if field in info and info[field] is not None:
+                    debt_val = info[field]
+                    if isinstance(debt_val, (int, float)) and debt_val >= 0:
+                        debt = float(debt_val)
+                        break
+            
+            # Build data dictionary
+            data = {
+                "price": price,
+                "shares": shares / 1e6,  # Convert to millions
+                "cash": cash / 1e6 if cash > 0 else 0,
+                "ebit": (ebitda * 0.85) / 1e6 if ebitda > 0 else 0,
+                "debt": debt / 1e6 if debt > 0 else 0,
+            }
+            
+            # Validate we have at least price and shares
+            if data["price"] > 0 and data["shares"] > 0:
+                # Handle currency conversion
+                if target_curr.upper() != native_curr.upper():
                     try:
-                        os.remove(os.path.join(output_dir, old_report))
-                    except Exception as e:
-                        logging.warning(f"Could not remove old report {old_report}: {str(e)}")
-            
-            # Save new report
-            with open(report_path, 'w', encoding='utf-8') as f:
-                f.write(self.html_report)
-            
-            logging.info(f"Report saved to {report_path}")
-            
-            # Store the path for email attachment
-            self.html_path = report_path
-            
+                        rate_ticker = yf.Ticker(f"{native_curr}{target_curr}=X")
+                        time.sleep(0.1)  # Small delay
+                        rate_history = rate_ticker.history(period="1d")
+                        if not rate_history.empty and len(rate_history) > 0:
+                            rate = rate_history['Close'].iloc[-1]
+                            if rate and rate > 0:
+                                for k in ["price", "cash", "ebit", "debt"]: 
+                                    data[k] *= rate
+                    except Exception as conv_error:
+                        # If currency conversion fails, continue with native currency
+                        pass
+                
+                return data
+            else:
+                # Last resort: try to get price from history if info failed
+                if data["price"] <= 0:
+                    try:
+                        hist = tk.history(period="5d")
+                        if not hist.empty and len(hist) > 0:
+                            price_from_hist = float(hist['Close'].iloc[-1])
+                            if price_from_hist > 0:
+                                data["price"] = price_from_hist
+                                # If we now have price and shares, return
+                                if data["shares"] > 0:
+                                    return data
+                    except:
+                        pass
+                continue
+                
         except Exception as e:
-            logging.error(f"Error saving HTML report: {str(e)}")
-            raise
+            last_error = str(e)
+            # Continue to next variant
+            continue
+    
+    # If all variants failed, return None
+    return None
 
-    def send_email_with_attachment(self):
-        try:
-            config = ConfigParser()
-            config.read(os.path.expanduser('~/config.ini'))
-            password = config.get('email', 'password')
-            send_from = 'j.sanz.cristobal@gmail.com'
-            send_to = 'j.sanz.cristobal@gmail.com'
-            subject = f'Stocks Report - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
-            body = 'Please find attached the latest stocks report.'
-            msg = EmailMessage()
-            msg['Subject'] = subject
-            msg['From'] = send_from
-            msg['To'] = send_to
-            msg.set_content(body)
-            msg.add_alternative(self.html_report, subtype='html')
-            with open(self.html_path, 'rb') as f:
-                file_data = f.read()
-                file_name = os.path.basename(f.name)
-            msg.add_attachment(file_data, maintype='application', subtype='octet-stream', filename=file_name)
-            with smtplib.SMTP('smtp.gmail.com', 587) as server:
-                server.starttls()
-                server.login(send_from, password)
-                server.send_message(msg)
-            logging.info(f"Email sent to {send_to}")
-        except Exception as e:
-            logging.error(f"Error sending email: {str(e)}")
+if 'st_vals' not in st.session_state:
+    st.session_state.st_vals = {
+        "price": 168.4, "shares": 12700.0, "cash": 96000.0, "ebit": 154740.0, "debt": 22000.0,
+        # Growth / risk / reinvestment defaults (used until overwritten by manual edit or an import)
+        "growth_rate_5y": 15.0, "growth_rate_5_10y": 8.0,
+        "risk_free_rate": 4.5, "equity_risk_premium": 5.13, "WACC": 9.6,
+        "reinvestment_rate_5y": 50.0, "reinvestment_rate_5_10y": 50.0,
+        "tax_rate": 21.0,
+    }
 
-def main():
-    # Define your list of stock tickers
-    tickers = list(custom_eps_data.keys())
-    output_dir = "stock_analysis_output"
-    os.makedirs(output_dir, exist_ok=True)
-    analyzer = StockAnalyzer(tickers)
-    analyzer.run_analysis()
-    # Send the report by email
-    analyzer.send_email_with_attachment()
 
-if __name__ == "__main__":
-    main()
+# Initialize tab state
+if 'active_tab' not in st.session_state:
+    st.session_state.active_tab = "New Analysis"
+
+with st.sidebar:
+    st.header("1. Automatic Search")
+    
+    # Initialize ticker search state
+    if 'selected_ticker' not in st.session_state:
+        st.session_state.selected_ticker = "GOOGL - Alphabet Inc. (Class A)"
+    
+    # Get all tickers from database
+    ticker_db = get_ticker_database()
+    all_ticker_options = [f"{ticker} - {name}" for ticker, name in sorted(ticker_db.items())]
+    
+    # Find current selection index
+    current_selection = st.session_state.get('selected_ticker', "GOOGL - Alphabet Inc. (Class A)")
+    try:
+        default_index = all_ticker_options.index(current_selection)
+    except ValueError:
+        default_index = 0
+        # Add current selection if not in database
+        all_ticker_options.insert(0, current_selection)
+    
+    # Single searchable selectbox - Streamlit's selectbox has built-in search/filter
+    # As you type, it filters the options and shows suggestions in a dropdown
+    selected_option = st.selectbox(
+        "Search Ticker (type to see suggestions)",
+        options=all_ticker_options,
+        index=default_index,
+        key="ticker_selectbox",
+        help="Start typing to search. Suggestions will appear in the dropdown as you type."
+    )
+    
+    # Extract ticker from selection
+    t_input = selected_option.split(" - ")[0].strip()
+    st.session_state.selected_ticker = selected_option
+    
+    target_currency = st.text_input("Target Currency", value="USD").upper()
+    
+    if st.button("Fetch & Auto-fill"):
+        with st.spinner(f"Fetching data for {t_input}..."):
+            try:
+                res = fetch_data(t_input, target_currency)
+                if res: 
+                    st.session_state.st_vals.update(res)
+                    st.success(f"✅ Data fetched for {t_input}! Values updated.")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Failed to fetch data for {t_input}.")
+                    st.info(f"💡 Tip: Some tickers need exchange suffixes. Try: {t_input}.CO (Copenhagen), {t_input}.TO (Toronto), {t_input}.L (London), etc.")
+                    # Try to show what went wrong
+                    try:
+                        test_ticker = yf.Ticker(t_input)
+                        test_info = test_ticker.info
+                        if test_info:
+                            st.warning(f"⚠️ Ticker {t_input} exists but missing required data fields.")
+                        else:
+                            st.warning(f"⚠️ Ticker {t_input} not found. Try with exchange suffix.")
+                    except:
+                        pass
+            except Exception as e:
+                st.error(f"❌ Error fetching data: {str(e)}")
+                st.info(f"💡 Tip: Try with exchange suffix (e.g., {t_input}.CO, {t_input}.TO, {t_input}.L)")
+
+    st.header("2. Import from Google Sheets / Excel Template")
+    st.caption(
+        "Reads a company tab built from the Damodaran DCF template (Sections 1-5: WACC, "
+        "R&D capitalization, growth & reinvestment assumptions) and auto-fills every field below."
+    )
+    gsheet_url = st.text_input(
+        "Google Sheets link (or spreadsheet ID)",
+        value=st.session_state.get("gsheet_url", ""),
+        placeholder="https://docs.google.com/spreadsheets/d/XXXXXXXX/edit#gid=0",
+        key="gsheet_url",
+    )
+    gsheet_tab = st.text_input(
+        "Tab name (company)", value=st.session_state.get("gsheet_tab", ""), placeholder="ASML", key="gsheet_tab"
+    )
+    gsheet_source = st.radio(
+        "Source",
+        options=["Public Google Sheet (no credentials)", "Uploaded Excel file (.xlsx)"],
+        horizontal=True,
+        key="gsheet_source",
+    )
+    uploaded_xlsx = None
+    if gsheet_source == "Uploaded Excel file (.xlsx)":
+        uploaded_xlsx = st.file_uploader("Upload the DCF template workbook", type=["xlsx"], key="gsheet_xlsx")
+
+    if st.button("Fetch from Sheet / Excel"):
+        if not gsheet_tab:
+            st.error("❌ Please enter the tab name to read (must match the company's tab exactly).")
+        else:
+            with st.spinner(f"Reading '{gsheet_tab}'..."):
+                try:
+                    if gsheet_source == "Public Google Sheet (no credentials)":
+                        if not gsheet_url:
+                            st.error("❌ Please paste a Google Sheets link or spreadsheet ID.")
+                            res = None
+                        else:
+                            res = fetch_from_google_sheet(gsheet_url, gsheet_tab)
+                    else:
+                        if uploaded_xlsx is None:
+                            st.error("❌ Please upload the .xlsx workbook first.")
+                            res = None
+                        else:
+                            res = fetch_from_excel_template(uploaded_xlsx, gsheet_tab)
+
+                    if res and res.get("_read_ok"):
+                        st.session_state.st_vals.update({k: v for k, v in res.items() if not k.startswith("_")})
+                        st.session_state.selected_ticker = f"{gsheet_tab} - (imported from template)"
+                        missing = res.get("_missing_fields", [])
+                        if missing:
+                            st.warning(
+                                f"⚠️ Imported '{gsheet_tab}', but couldn't read: {', '.join(missing)}. "
+                                "Check the tab name and that the template layout wasn't modified."
+                            )
+                        else:
+                            st.success(f"✅ All fields imported from tab '{gsheet_tab}'.")
+                        st.rerun()
+                    elif res is not None:
+                        st.error(f"❌ Tab '{gsheet_tab}' was found but no values could be parsed. Check the layout.")
+                except Exception as e:
+                    st.error(f"❌ Error reading '{gsheet_tab}': {str(e)}")
+                    st.info(
+                        "💡 Tip: for a Google Sheet, the tab must be shared as 'Anyone with the link can view'. "
+                        "For a private sheet, use the Excel upload option instead."
+                    )
+
+with st.sidebar.form("input_form"):
+    # Check if user is set
+    if not st.session_state.get('user_initialized') or not get_user_name():
+        st.error("⚠️ **Please set your user name at the top of the page before filling out this form.**")
+        st.info("Your analyses will be saved under your name, and you'll be able to access them later.")
+        st.stop()
+    
+    st.header("Company Information")
+    _default_company_name = st.session_state.get("gsheet_tab") or t_input
+    company_name = st.text_input("Company Name", value=_default_company_name)
+    # Currency se usa desde target_currency de arriba
+
+    st.header("Financial Information")
+    
+    # Check which values are missing (0) and show warning
+    missing_fields = []
+    if float(st.session_state.st_vals.get('price', 0.0)) == 0:
+        missing_fields.append("Current Price")
+    if float(st.session_state.st_vals.get('shares', 0.0)) == 0:
+        missing_fields.append("Shares Outstanding")
+    if float(st.session_state.st_vals.get('cash', 0.0)) == 0:
+        missing_fields.append("Cash")
+    if float(st.session_state.st_vals.get('ebit', 0.0)) == 0:
+        missing_fields.append("Operating Income Base")
+    if float(st.session_state.st_vals.get('debt', 0.0)) == 0:
+        missing_fields.append("Debt")
+    
+    if missing_fields:
+        st.warning(f"⚠️ The following fields are 0 (not retrieved by autofetch): {', '.join(missing_fields)}. Please enter them manually.")
+    
+    # Two columns layout for financial information
+    col1, col2 = st.columns(2)
+    with col1:
+        # Dynamically adjust max based on current value to accommodate fetched data
+        price_val = float(st.session_state.st_vals.get('price', 0.0))
+        shares_val = float(st.session_state.st_vals.get('shares', 0.0))
+        cash_val = float(st.session_state.st_vals.get('cash', 0.0))
+        
+        price_max = max(10000.0, price_val * 2) if price_val > 0 else 10000.0
+        shares_max = max(100000.0, shares_val * 2) if shares_val > 0 else 100000.0
+        cash_max = max(1000000.0, cash_val * 2) if cash_val > 0 else 1000000.0
+        
+        current_price = st.number_input("Current Price", min_value=0.0, max_value=price_max, value=price_val, step=0.1)
+        shares_outstanding = st.number_input("Shares Outstanding (millions)", min_value=0.0, max_value=shares_max, value=shares_val, step=1.0)
+        cash = st.number_input("Cash (millions)", min_value=0.0, max_value=cash_max, value=cash_val, step=100.0)
+    with col2:
+        ebit_val = float(st.session_state.st_vals.get('ebit', 0.0))
+        debt_val = float(st.session_state.st_vals.get('debt', 0.0))
+        
+        ebit_max = max(1000000.0, ebit_val * 2) if ebit_val > 0 else 1000000.0
+        debt_max = max(1000000.0, debt_val * 2) if debt_val > 0 else 1000000.0
+        
+        operating_income_base = st.number_input("Operating Income Base (millions)", min_value=0.0, max_value=ebit_max, value=ebit_val, step=100.0)
+        debt = st.number_input("Debt (millions)", min_value=0.0, max_value=debt_max, value=debt_val, step=100.0)
+        tax_rate = st.number_input("Tax Rate (%)", min_value=0.0, max_value=50.0,
+                                    value=float(st.session_state.st_vals.get('tax_rate', 21.0)), step=0.1)
+    
+    # Calculate and display implied NOPAT
+    nopat_implied = operating_income_base * (1 - tax_rate / 100)
+    st.info(f"**Implied NOPAT:** {nopat_implied:.2f} millions {target_currency} (Operating Income × (1 - Tax Rate))")
+
+    # TODOS LOS PARÁMETROS ORIGINALES
+    st.header("Growth Parameters")
+    col1, col2 = st.columns(2)
+    with col1:
+        growth_rate_5y = st.number_input("Growth Rate 5y (%)", min_value=-50.0, max_value=100.0,
+                                          value=float(st.session_state.st_vals.get('growth_rate_5y', 15.0)), step=0.1)
+    with col2:
+        growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", min_value=-50.0, max_value=100.0,
+                                             value=float(st.session_state.st_vals.get('growth_rate_5_10y', 8.0)), step=0.1)
+
+    st.header("Risk Parameters")
+    col1, col2 = st.columns(2)
+    with col1:
+        risk_free_rate = st.number_input("Risk Free Rate (%)", min_value=0.0, max_value=20.0,
+                                          value=float(st.session_state.st_vals.get('risk_free_rate', 4.5)), step=0.01)
+        equity_risk_premium = st.number_input("Equity Risk Premium (%)", min_value=0.0, max_value=15.0,
+                                               value=float(st.session_state.st_vals.get('equity_risk_premium', 5.13)), step=0.01)
+    with col2:
+        WACC = st.number_input("WACC (%)", min_value=0.0, max_value=30.0,
+                                value=float(st.session_state.st_vals.get('WACC', 9.6)), step=0.1)
+
+    st.header("Reinvestment Rates")
+    col1, col2 = st.columns(2)
+    with col1:
+        reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", min_value=0.0, max_value=100.0,
+                                                value=float(st.session_state.st_vals.get('reinvestment_rate_5y', 50.0)), step=0.1)
+    with col2:
+        reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", min_value=0.0, max_value=100.0,
+                                                   value=float(st.session_state.st_vals.get('reinvestment_rate_5_10y', 50.0)), step=0.1)
+
+    st.header("Standard Deviations")
+    col1, col2 = st.columns(2)
+    with col1:
+        std_growth_5y = st.number_input("Std Growth 5y (%)", min_value=0.0, max_value=20.0, value=2.0, step=0.1)
+        std_growth_5_10y = st.number_input("Std Growth 5-10y (%)", min_value=0.0, max_value=20.0, value=3.0, step=0.1)
+        std_risk_free = st.number_input("Std Risk Free (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
+        std_equity_premium = st.number_input("Std Equity Premium (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
+    with col2:
+        std_WACC = st.number_input("Std WACC (%)", min_value=0.0, max_value=5.0, value=0.5, step=0.01)
+        std_reinv_5y = st.number_input("Std Reinv 5y (%)", min_value=0.0, max_value=20.0, value=2.5, step=0.1)
+        std_reinv_5_10y = st.number_input("Std Reinv 5-10y (%)", min_value=0.0, max_value=20.0, value=5.0, step=0.1)
+
+    n_simulations = st.number_input("Simulations", min_value=1000, max_value=100000, value=10000, step=1000)
+    submitted = st.form_submit_button("Run Simulation")
+
+# If an analysis is selected for viewing, force to else block for proper tab handling
+# This ensures consistent behavior whether coming from a new analysis or directly
+viewing_analysis = st.session_state.get('selected_analysis') and not submitted
+
+if submitted and not viewing_analysis:
+    # Check if user name is set
+    if not st.session_state.get('user_initialized') or not get_user_name():
+        st.error("❌ Please set your user name at the top of the page before running a simulation.")
+        st.stop()
+    
+    params = {
+        'company_name': company_name, 'currency': target_currency,
+        'current_price': current_price, 'shares_outstanding': shares_outstanding,
+        'cash': cash, 'debt': debt, 'operating_income_base': operating_income_base,
+        'tax_rate': tax_rate/100,
+        'growth_rate_5y': growth_rate_5y/100, 'growth_rate_5_10y': growth_rate_5_10y/100,
+        'risk_free_rate': risk_free_rate/100, 'equity_risk_premium': equity_risk_premium/100,
+        'WACC': WACC/100, 'reinvestment_rate_5y': reinvestment_rate_5y/100,
+        'reinvestment_rate_5_10y': reinvestment_rate_5_10y/100,
+        'std_growth_5y': std_growth_5y/100, 'std_growth_5_10y': std_growth_5_10y/100,
+        'std_risk_free': std_risk_free/100, 'std_equity_premium': std_equity_premium/100,
+        'std_WACC': std_WACC/100, 'std_reinv_5y': std_reinv_5y/100,
+        'std_reinv_5_10y': std_reinv_5_10y/100, 'n_simulations': int(n_simulations)
+    }
+
+    with st.spinner("Running Monte Carlo simulation..."):
+        fig_es, fig_distribution_only, fig_sensitivity, valuation_summary = run_monte_carlo_simulation(params)
+        
+        # Save the analysis
+        analysis_id = save_analysis(t_input, company_name, valuation_summary, fig_es, fig_distribution_only, fig_sensitivity)
+        st.success(f"Monte Carlo simulation for {company_name} completed successfully! Analysis saved.")
+
+        tab1, tab2, tab3 = st.tabs(["Results", "Summary", "Performed Analyses"])
+        
+        with tab1:
+            # Removed Results header
+            st.pyplot(fig_es)
+            
+            # Add download button for the results plot
+            buf_es = io.BytesIO()
+            fig_es.savefig(buf_es, format="png")
+            st.download_button(
+                label="Download Results Plot",
+                data=buf_es.getvalue(),
+                file_name=f"{company_name}_results_plot.png",
+                mime="image/png"
+            )
+
+        with tab2:
+            # Use columns to display the distribution plot and the summary side-by-side
+            col1_dist, col2_summary = st.columns([2, 1]) # Adjust column ratios as needed
+            with col1_dist:
+                # Removed Intrinsic Value Distribution header
+                st.pyplot(fig_distribution_only)
+
+                # Add download button for the intrinsic value distribution plot in Summary tab
+                buf_dist_summary = io.BytesIO()
+                fig_distribution_only.savefig(buf_dist_summary, format="png")
+                st.download_button(
+                    label="Download Intrinsic Value Distribution Plot",
+                    data=buf_dist_summary.getvalue(),
+                    file_name=f"{company_name}_intrinsic_value_distribution_summary_plot.png",
+                    mime="image/png"
+                )
+
+            with col2_summary:
+                st.markdown("""
+                    <style>
+                    .summary-text {
+                        font-size: 0.9em;
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
+                
+                # Centered header for the Valuation Summary
+                st.markdown("<h3 style='text-align: center;'>Valuation Summary</h3>", unsafe_allow_html=True)
+                
+                st.markdown(f"""
+                    <div class="summary-text">
+                    <p><strong>Company:</strong> {valuation_summary['company_name']}<br>
+                    <strong>Date:</strong> {valuation_summary['date']}<br>
+                    <strong>-------------------</strong></p>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Create two columns for the summary content
+                sum_col1, sum_col2 = st.columns(2)
+                
+                with sum_col1:
+                    st.markdown(f"""
+                        <div class="summary-text">
+                        <p><strong>Current Price:</strong> {valuation_summary['current_price']}<br>
+                        <strong>Mean Value:</strong> {valuation_summary['mean_value']}<br>
+                        <strong>Median Value:</strong> {valuation_summary['median_value']}<br>
+                        <strong>Upside Potential:</strong> {valuation_summary['upside_potential']}</p>
+                        
+                        <p><strong>Probabilities:</strong><br>
+                        Overvaluation: {valuation_summary['prob_overvalued']}<br>
+                        Undervaluation: {valuation_summary['prob_undervalued']}</p>
+                        
+                        <p><strong>Risk Metrics:</strong><br>
+                        VaR 95%: {valuation_summary['VaR 95%']}<br>
+                        CVaR 95%: {valuation_summary['CVaR 95%']}<br>
+                        Std. Deviation: {valuation_summary['Std. Deviation']}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+                
+                with sum_col2:
+                    st.markdown(f"""
+                        <div class="summary-text">
+                        <p><strong>Variable Parameters:</strong><br>
+                        Growth 5y: {valuation_summary['Variable Parameters']['Growth 5y']}<br>
+                        Growth 5-10y: {valuation_summary['Variable Parameters']['Growth 5-10y']}<br>
+                        WACC: {valuation_summary['Variable Parameters']['WACC']}<br>
+                        Risk Premium: {valuation_summary['Variable Parameters']['Risk Premium']}<br>
+                        Risk Free Rate: {valuation_summary['Variable Parameters']['Risk Free Rate']}<br>
+                        Reinvestment 5y: {valuation_summary['Variable Parameters']['Reinvestment 5y']}<br>
+                        Reinvestment 5-10y: {valuation_summary['Variable Parameters']['Reinvestment 5-10y']}</p>
+                        
+                        <p><strong>Terminal Value Params:</strong><br>
+                        Term. Growth: {valuation_summary['Terminal Value Params']['Term. Growth']}<br>
+                        Term. WACC: {valuation_summary['Terminal Value Params']['Term. WACC']}<br>
+                        Term. Reinv Rate: {valuation_summary['Terminal Value Params']['Term. Reinv Rate']}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+        # Close the plot figures to free up memory
+        plt.close(fig_es)
+        plt.close(fig_distribution_only)
+        plt.close(fig_sensitivity)
+        
+        # Performed Analyses tab
+        with tab3:
+            display_saved_analyses()
+else:
+    # Show Performed Analyses tab even when no simulation is running
+    # Use query params and session state to maintain tab selection
+    tab_names = ["New Analysis", "Performed Analyses"]
+    
+    # Check query params first (most reliable for persistence)
+    query_tab = None
+    if "tab" in st.query_params:
+        tab_param = st.query_params.get("tab")
+        query_tab = tab_param[0] if isinstance(tab_param, list) else tab_param
+    
+    # PRIORITY: If an analysis is selected, ALWAYS force to Performed Analyses tab
+    # This must be checked FIRST before any other logic
+    if st.session_state.get('selected_analysis'):
+        st.session_state.active_tab = "Performed Analyses"
+        if query_tab != "performed":
+            st.query_params.tab = "performed"
+        # Force the radio button to use Performed Analyses by clearing its state
+        if 'tab_selector' in st.session_state:
+            # Reset the radio button state to force it to use our index
+            del st.session_state.tab_selector
+        default_index = 1
+    # Check query params
+    elif query_tab == "performed":
+        st.session_state.active_tab = "Performed Analyses"
+        default_index = 1
+    # Otherwise, use the stored active_tab state
+    elif st.session_state.active_tab == "Performed Analyses":
+        default_index = 1
+    else:
+        default_index = 0
+        if st.session_state.active_tab != "New Analysis":
+            st.session_state.active_tab = "New Analysis"
+    
+    # Create tabs with radio buttons to maintain state
+    # If selected_analysis exists, force the value to "Performed Analyses"
+    if st.session_state.get('selected_analysis'):
+        # Force the radio to show Performed Analyses
+        tab_selection = st.radio(
+            "Navigation",
+            options=tab_names,
+            index=1,  # Force index 1
+            horizontal=True,
+            key="tab_selector"
+        )
+    else:
+        tab_selection = st.radio(
+            "Navigation",
+            options=tab_names,
+            index=default_index,
+            horizontal=True,
+            key="tab_selector"
+        )
+    
+    # Update session state and query params when tab changes
+    if tab_selection != st.session_state.active_tab:
+        st.session_state.active_tab = tab_selection
+        if tab_selection == "Performed Analyses":
+            st.query_params.tab = "performed"
+        else:
+            st.query_params.tab = "new"
+            # Clear selected analysis when switching to New Analysis
+            if 'selected_analysis' in st.session_state:
+                st.session_state.selected_analysis = None
+    
+    if tab_selection == "New Analysis":
+        st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
+    else:
+        display_saved_analyses()
