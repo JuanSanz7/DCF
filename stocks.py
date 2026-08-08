@@ -9,12 +9,136 @@ from functools import lru_cache
 import time
 from typing import Dict, List, Optional
 import os
+import re
 import smtplib
 from email.message import EmailMessage
 from configparser import ConfigParser
 from email.utils import make_msgid
 from IPython.display import display, HTML
 import matplotlib.dates as mdates
+
+# ---------------------------------------------------------------------------
+# Damodaran DCF template import (Google Sheets / Excel)
+# ---------------------------------------------------------------------------
+# Maps each DCF Monte Carlo input to its row (1-indexed, column B) in the
+# single-tab Damodaran DCF template (Sections 1-5: WACC & CAPM, R&D
+# capitalization, growth & reinvestment assumptions). Every company tab in
+# the template shares this exact row layout, so a single map works for all
+# of them. If the template layout is ever edited (rows inserted/removed),
+# update these row numbers to match — or better, switch the template to
+# Named Ranges and adapt these two functions to read by name instead.
+TEMPLATE_ROW_MAP = {
+    "risk_free_rate": 12,       # Tasa libre de riesgo (Rf)          -> stored as %, e.g. 0.0315
+    "equity_risk_premium": 13,  # Prima de riesgo (ERP)
+    "beta": 14,                 # Beta (informational, not a Monte Carlo input)
+    "tax_rate": 19,             # Tasa impositiva
+    "market_cap": 21,           # Capitalizacion bursatil - MC
+    "debt": 22,                 # Deuda total - Debt
+    "WACC": 26,                 # COST OF CAPITAL (WACC)
+    "shares": 27,                # Acciones en circulacion, diluidas (m)
+    "price": 28,                 # Precio de mercado actual
+    "ebit": 43,                  # EBIT (con I+D capitalizado) - base del modelo
+    "cash": 48,                  # Caja y equivalentes
+    "growth_rate_5y": 61,        # Growth 5y
+    "growth_rate_5_10y": 62,     # Growth 5-10y
+    "reinvestment_rate_5y": 63,  # Reinvestment 5y
+    "reinvestment_rate_5_10y": 64,  # Reinvestment 5-10y
+}
+# These fields are stored as fractions in the template (e.g. 0.135 = 13.5%)
+# and must be converted to the app's percentage-point convention (13.5).
+_PERCENT_FIELDS = {
+    "risk_free_rate", "equity_risk_premium", "tax_rate", "WACC",
+    "growth_rate_5y", "growth_rate_5_10y", "reinvestment_rate_5y", "reinvestment_rate_5_10y",
+}
+# Fields the app actually consumes (everything else in the map is read but ignored)
+_APP_FIELDS = [
+    "price", "shares", "cash", "ebit", "debt", "tax_rate",
+    "growth_rate_5y", "growth_rate_5_10y", "risk_free_rate", "equity_risk_premium",
+    "WACC", "reinvestment_rate_5y", "reinvestment_rate_5_10y",
+]
+
+
+def extract_sheet_id(url_or_id: str) -> str:
+    """Pulls the spreadsheet ID out of a full Google Sheets URL, or returns
+    the input unchanged if it's already a bare ID."""
+    m = re.search(r"/d/([a-zA-Z0-9_-]+)", url_or_id)
+    return m.group(1) if m else url_or_id.strip()
+
+
+def _clean_numeric(raw) -> Optional[float]:
+    """Parses a cell value that may be formatted as '13.50%', '1,234.5', or
+    a plain number. Returns None if it can't be parsed."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)) and not (isinstance(raw, float) and pd.isna(raw)):
+        return float(raw)
+    s = str(raw).strip()
+    if not s or s.lower() == "nan":
+        return None
+    was_percent = s.endswith("%")
+    s = s.replace("%", "").replace(",", "").replace("€", "").replace("$", "").strip()
+    try:
+        val = float(s)
+    except ValueError:
+        return None
+    return val / 100.0 if was_percent else val
+
+
+def _grid_to_app_values(grid_lookup) -> Dict:
+    """Shared logic: given a function that returns the raw cell value for
+    (row_1indexed, col_letter='B'), builds the dict of app-ready values."""
+    data = {}
+    missing_fields = []
+    for key in _APP_FIELDS:
+        row = TEMPLATE_ROW_MAP.get(key)
+        raw = grid_lookup(row) if row else None
+        val = _clean_numeric(raw)
+        if val is None:
+            missing_fields.append(key)
+            continue
+        data[key] = val * 100.0 if key in _PERCENT_FIELDS else val
+    data["_read_ok"] = True
+    data["_missing_fields"] = missing_fields
+    return data
+
+
+def fetch_from_google_sheet(sheet_url: str, tab_name: str) -> Dict:
+    """Reads a company tab from a PUBLIC Google Sheet built from the
+    Damodaran DCF template (no credentials required — the tab must be
+    shared as 'Anyone with the link can view'). Returns a dict compatible
+    with st.session_state.st_vals in DCF_streamlit.py.
+    """
+    sheet_id = extract_sheet_id(sheet_url)
+    tab_encoded = tab_name.replace(" ", "%20")
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={tab_encoded}"
+    df = pd.read_csv(csv_url, header=None)
+
+    def grid_lookup(row_1indexed, col_letter="B"):
+        col_idx = ord(col_letter.upper()) - ord("A")
+        try:
+            return df.iloc[row_1indexed - 1, col_idx]
+        except (IndexError, KeyError):
+            return None
+
+    return _grid_to_app_values(grid_lookup)
+
+
+def fetch_from_excel_template(file_like, tab_name: str) -> Dict:
+    """Reads a company tab from an uploaded .xlsx workbook built from the
+    Damodaran DCF template (use this for private workbooks — no sharing
+    settings needed). `file_like` is a file path or a file-like object,
+    e.g. Streamlit's UploadedFile from st.file_uploader.
+    """
+    import openpyxl
+    wb = openpyxl.load_workbook(file_like, data_only=True)
+    if tab_name not in wb.sheetnames:
+        raise ValueError(f"Tab '{tab_name}' not found. Available tabs: {', '.join(wb.sheetnames)}")
+    ws = wb[tab_name]
+
+    def grid_lookup(row_1indexed, col_letter="B"):
+        return ws[f"{col_letter}{row_1indexed}"].value
+
+    return _grid_to_app_values(grid_lookup)
 
 # Set up logging
 logging.basicConfig(
@@ -940,4 +1064,4 @@ def main():
     analyzer.send_email_with_attachment()
 
 if __name__ == "__main__":
-    main() 
+    main()
