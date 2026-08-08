@@ -79,8 +79,9 @@ def _normalize(s) -> str:
 
 
 def _clean_numeric(raw) -> Optional[float]:
-    """Parses a cell value that may be formatted as '13.50%', '1,234.5', or
-    a plain number. Returns None if it can't be parsed."""
+    """Parses a cell value that may be formatted as '13.50%', '1,234.5',
+    '3,720 m' (unit suffix), or a plain number. Returns None if no number
+    can be found in it at all."""
     if raw is None:
         return None
     if isinstance(raw, (int, float)) and not (isinstance(raw, float) and pd.isna(raw)):
@@ -88,8 +89,13 @@ def _clean_numeric(raw) -> Optional[float]:
     s = str(raw).strip()
     if not s or s.lower() == "nan":
         return None
-    was_percent = s.endswith("%")
-    s = s.replace("%", "").replace(",", "").replace("€", "").replace("$", "").strip()
+    was_percent = "%" in s
+    # Grab the first number-looking token and ignore anything around it
+    # (currency symbols, unit suffixes like ' m'/' EUR millones', etc.)
+    m = re.search(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?", s)
+    if not m:
+        return None
+    s = m.group(0).replace(",", "")
     try:
         val = float(s)
     except ValueError:
