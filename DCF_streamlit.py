@@ -142,6 +142,7 @@ import requests
 from datetime import datetime
 from pathlib import Path
 from DCF_main import run_monte_carlo_simulation
+from stocks import fetch_from_google_sheet, fetch_from_excel_template
 
 # --- ANALYSIS STORAGE FUNCTIONS (MUST BE DEFINED FIRST) ---
 # Use absolute path for better persistence
@@ -1498,7 +1499,14 @@ def fetch_data(ticker, target_curr):
     return None
 
 if 'st_vals' not in st.session_state:
-    st.session_state.st_vals = {"price": 168.4, "shares": 12700.0, "cash": 96000.0, "ebit": 154740.0, "debt": 22000.0}
+    st.session_state.st_vals = {
+        "price": 168.4, "shares": 12700.0, "cash": 96000.0, "ebit": 154740.0, "debt": 22000.0,
+        # Growth / risk / reinvestment defaults (used until overwritten by manual edit or an import)
+        "growth_rate_5y": 15.0, "growth_rate_5_10y": 8.0,
+        "risk_free_rate": 4.5, "equity_risk_premium": 5.13, "WACC": 9.6,
+        "reinvestment_rate_5y": 50.0, "reinvestment_rate_5_10y": 50.0,
+        "tax_rate": 21.0,
+    }
 
 
 # Initialize tab state
@@ -1566,6 +1574,70 @@ with st.sidebar:
                 st.error(f"❌ Error fetching data: {str(e)}")
                 st.info(f"💡 Tip: Try with exchange suffix (e.g., {t_input}.CO, {t_input}.TO, {t_input}.L)")
 
+    st.header("2. Import from Google Sheets / Excel Template")
+    st.caption(
+        "Reads a company tab built from the Damodaran DCF template (Sections 1-5: WACC, "
+        "R&D capitalization, growth & reinvestment assumptions) and auto-fills every field below."
+    )
+    gsheet_url = st.text_input(
+        "Google Sheets link (or spreadsheet ID)",
+        value=st.session_state.get("gsheet_url", ""),
+        placeholder="https://docs.google.com/spreadsheets/d/XXXXXXXX/edit#gid=0",
+        key="gsheet_url",
+    )
+    gsheet_tab = st.text_input(
+        "Tab name (company)", value=st.session_state.get("gsheet_tab", ""), placeholder="ASML", key="gsheet_tab"
+    )
+    gsheet_source = st.radio(
+        "Source",
+        options=["Public Google Sheet (no credentials)", "Uploaded Excel file (.xlsx)"],
+        horizontal=True,
+        key="gsheet_source",
+    )
+    uploaded_xlsx = None
+    if gsheet_source == "Uploaded Excel file (.xlsx)":
+        uploaded_xlsx = st.file_uploader("Upload the DCF template workbook", type=["xlsx"], key="gsheet_xlsx")
+
+    if st.button("Fetch from Sheet / Excel"):
+        if not gsheet_tab:
+            st.error("❌ Please enter the tab name to read (must match the company's tab exactly).")
+        else:
+            with st.spinner(f"Reading '{gsheet_tab}'..."):
+                try:
+                    if gsheet_source == "Public Google Sheet (no credentials)":
+                        if not gsheet_url:
+                            st.error("❌ Please paste a Google Sheets link or spreadsheet ID.")
+                            res = None
+                        else:
+                            res = fetch_from_google_sheet(gsheet_url, gsheet_tab)
+                    else:
+                        if uploaded_xlsx is None:
+                            st.error("❌ Please upload the .xlsx workbook first.")
+                            res = None
+                        else:
+                            res = fetch_from_excel_template(uploaded_xlsx, gsheet_tab)
+
+                    if res and res.get("_read_ok"):
+                        st.session_state.st_vals.update({k: v for k, v in res.items() if not k.startswith("_")})
+                        st.session_state.selected_ticker = f"{gsheet_tab} - (imported from template)"
+                        missing = res.get("_missing_fields", [])
+                        if missing:
+                            st.warning(
+                                f"⚠️ Imported '{gsheet_tab}', but couldn't read: {', '.join(missing)}. "
+                                "Check the tab name and that the template layout wasn't modified."
+                            )
+                        else:
+                            st.success(f"✅ All fields imported from tab '{gsheet_tab}'.")
+                        st.rerun()
+                    elif res is not None:
+                        st.error(f"❌ Tab '{gsheet_tab}' was found but no values could be parsed. Check the layout.")
+                except Exception as e:
+                    st.error(f"❌ Error reading '{gsheet_tab}': {str(e)}")
+                    st.info(
+                        "💡 Tip: for a Google Sheet, the tab must be shared as 'Anyone with the link can view'. "
+                        "For a private sheet, use the Excel upload option instead."
+                    )
+
 with st.sidebar.form("input_form"):
     # Check if user is set
     if not st.session_state.get('user_initialized') or not get_user_name():
@@ -1574,7 +1646,8 @@ with st.sidebar.form("input_form"):
         st.stop()
     
     st.header("Company Information")
-    company_name = st.text_input("Company Name", value=t_input)
+    _default_company_name = st.session_state.get("gsheet_tab") or t_input
+    company_name = st.text_input("Company Name", value=_default_company_name)
     # Currency se usa desde target_currency de arriba
 
     st.header("Financial Information")
@@ -1619,7 +1692,8 @@ with st.sidebar.form("input_form"):
         
         operating_income_base = st.number_input("Operating Income Base (millions)", min_value=0.0, max_value=ebit_max, value=ebit_val, step=100.0)
         debt = st.number_input("Debt (millions)", min_value=0.0, max_value=debt_max, value=debt_val, step=100.0)
-        tax_rate = st.number_input("Tax Rate (%)", min_value=0.0, max_value=50.0, value=21.0, step=0.1)
+        tax_rate = st.number_input("Tax Rate (%)", min_value=0.0, max_value=50.0,
+                                    value=float(st.session_state.st_vals.get('tax_rate', 21.0)), step=0.1)
     
     # Calculate and display implied NOPAT
     nopat_implied = operating_income_base * (1 - tax_rate / 100)
@@ -1629,24 +1703,31 @@ with st.sidebar.form("input_form"):
     st.header("Growth Parameters")
     col1, col2 = st.columns(2)
     with col1:
-        growth_rate_5y = st.number_input("Growth Rate 5y (%)", min_value=-50.0, max_value=100.0, value=15.0, step=0.1)
+        growth_rate_5y = st.number_input("Growth Rate 5y (%)", min_value=-50.0, max_value=100.0,
+                                          value=float(st.session_state.st_vals.get('growth_rate_5y', 15.0)), step=0.1)
     with col2:
-        growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", min_value=-50.0, max_value=100.0, value=8.0, step=0.1)
+        growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", min_value=-50.0, max_value=100.0,
+                                             value=float(st.session_state.st_vals.get('growth_rate_5_10y', 8.0)), step=0.1)
 
     st.header("Risk Parameters")
     col1, col2 = st.columns(2)
     with col1:
-        risk_free_rate = st.number_input("Risk Free Rate (%)", min_value=0.0, max_value=20.0, value=4.5, step=0.01)
-        equity_risk_premium = st.number_input("Equity Risk Premium (%)", min_value=0.0, max_value=15.0, value=5.13, step=0.01)
+        risk_free_rate = st.number_input("Risk Free Rate (%)", min_value=0.0, max_value=20.0,
+                                          value=float(st.session_state.st_vals.get('risk_free_rate', 4.5)), step=0.01)
+        equity_risk_premium = st.number_input("Equity Risk Premium (%)", min_value=0.0, max_value=15.0,
+                                               value=float(st.session_state.st_vals.get('equity_risk_premium', 5.13)), step=0.01)
     with col2:
-        WACC = st.number_input("WACC (%)", min_value=0.0, max_value=30.0, value=9.6, step=0.1)
+        WACC = st.number_input("WACC (%)", min_value=0.0, max_value=30.0,
+                                value=float(st.session_state.st_vals.get('WACC', 9.6)), step=0.1)
 
     st.header("Reinvestment Rates")
     col1, col2 = st.columns(2)
     with col1:
-        reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.1)
+        reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", min_value=0.0, max_value=100.0,
+                                                value=float(st.session_state.st_vals.get('reinvestment_rate_5y', 50.0)), step=0.1)
     with col2:
-        reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.1)
+        reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", min_value=0.0, max_value=100.0,
+                                                   value=float(st.session_state.st_vals.get('reinvestment_rate_5_10y', 50.0)), step=0.1)
 
     st.header("Standard Deviations")
     col1, col2 = st.columns(2)
@@ -1866,7 +1947,6 @@ else:
         st.info("Fill out the form in the sidebar and click 'Run Simulation' to perform a new analysis.")
     else:
         display_saved_analyses()
-
 
 
 
