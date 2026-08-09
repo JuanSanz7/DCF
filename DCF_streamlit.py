@@ -1554,6 +1554,8 @@ with st.sidebar:
                 res = fetch_data(t_input, target_currency)
                 if res: 
                     st.session_state.st_vals.update(res)
+                    for k, v in res.items():
+                        st.session_state[k] = v  # see comment near the Google Sheets fetch handler below
                     st.success(f"✅ Data fetched for {t_input}! Values updated.")
                     st.rerun()
                 else:
@@ -1619,6 +1621,15 @@ with st.sidebar:
                     if res and res.get("_read_ok"):
                         imported = {k: v for k, v in res.items() if not k.startswith("_")}
                         st.session_state.st_vals.update(imported)
+                        # Widgets below now have explicit key=<field name> (e.g. key="price"), and once a
+                        # keyed widget has been rendered once, Streamlit reads st.session_state[key] on
+                        # every subsequent rerun and IGNORES the value= argument passed in code. So the
+                        # dict update above alone is not enough to refresh the visible fields on a second
+                        # (or third...) fetch — we also have to overwrite each widget's own session_state
+                        # entry directly, which is what actually makes a re-fetch (e.g. switching from the
+                        # ASML tab to the TSM tab) show up in the form instead of the previous company's values.
+                        for k, v in imported.items():
+                            st.session_state[k] = v
                         st.session_state.selected_ticker = f"{gsheet_tab} - (imported from template)"
                         missing = res.get("_missing_fields", [])
                         imported_list = ", ".join(sorted(imported.keys())) if imported else "none"
@@ -1690,9 +1701,9 @@ with st.sidebar.form("input_form"):
         shares_max = max(100000.0, shares_val * 2) if shares_val > 0 else 100000.0
         cash_max = max(1000000.0, cash_val * 2) if cash_val > 0 else 1000000.0
         
-        current_price = st.number_input("Current Price", min_value=0.0, max_value=price_max, value=price_val, step=0.1)
-        shares_outstanding = st.number_input("Shares Outstanding (millions)", min_value=0.0, max_value=shares_max, value=shares_val, step=1.0)
-        cash = st.number_input("Cash (millions)", min_value=0.0, max_value=cash_max, value=cash_val, step=100.0)
+        current_price = st.number_input("Current Price", min_value=0.0, max_value=price_max, value=price_val, step=0.1, key="price")
+        shares_outstanding = st.number_input("Shares Outstanding (millions)", min_value=0.0, max_value=shares_max, value=shares_val, step=1.0, key="shares")
+        cash = st.number_input("Cash (millions)", min_value=0.0, max_value=cash_max, value=cash_val, step=100.0, key="cash")
     with col2:
         ebit_val = float(st.session_state.st_vals.get('ebit', 0.0))
         debt_val = float(st.session_state.st_vals.get('debt', 0.0))
@@ -1700,10 +1711,10 @@ with st.sidebar.form("input_form"):
         ebit_max = max(1000000.0, ebit_val * 2) if ebit_val > 0 else 1000000.0
         debt_max = max(1000000.0, debt_val * 2) if debt_val > 0 else 1000000.0
         
-        operating_income_base = st.number_input("Operating Income Base (millions)", min_value=0.0, max_value=ebit_max, value=ebit_val, step=100.0)
-        debt = st.number_input("Debt (millions)", min_value=0.0, max_value=debt_max, value=debt_val, step=100.0)
+        operating_income_base = st.number_input("Operating Income Base (millions)", min_value=0.0, max_value=ebit_max, value=ebit_val, step=100.0, key="ebit")
+        debt = st.number_input("Debt (millions)", min_value=0.0, max_value=debt_max, value=debt_val, step=100.0, key="debt")
         tax_rate = st.number_input("Tax Rate (%)", min_value=0.0, max_value=50.0,
-                                    value=float(st.session_state.st_vals.get('tax_rate', 21.0)), step=0.1)
+                                    value=float(st.session_state.st_vals.get('tax_rate', 21.0)), step=0.1, key="tax_rate")
     
     # Calculate and display implied NOPAT
     nopat_implied = operating_income_base * (1 - tax_rate / 100)
@@ -1714,30 +1725,30 @@ with st.sidebar.form("input_form"):
     col1, col2 = st.columns(2)
     with col1:
         growth_rate_5y = st.number_input("Growth Rate 5y (%)", min_value=-50.0, max_value=100.0,
-                                          value=float(st.session_state.st_vals.get('growth_rate_5y', 15.0)), step=0.1)
+                                          value=float(st.session_state.st_vals.get('growth_rate_5y', 15.0)), step=0.1, key="growth_rate_5y")
     with col2:
         growth_rate_5_10y = st.number_input("Growth Rate 5-10y (%)", min_value=-50.0, max_value=100.0,
-                                             value=float(st.session_state.st_vals.get('growth_rate_5_10y', 8.0)), step=0.1)
+                                             value=float(st.session_state.st_vals.get('growth_rate_5_10y', 8.0)), step=0.1, key="growth_rate_5_10y")
 
     st.header("Risk Parameters")
     col1, col2 = st.columns(2)
     with col1:
         risk_free_rate = st.number_input("Risk Free Rate (%)", min_value=0.0, max_value=20.0,
-                                          value=float(st.session_state.st_vals.get('risk_free_rate', 4.5)), step=0.01)
+                                          value=float(st.session_state.st_vals.get('risk_free_rate', 4.5)), step=0.01, key="risk_free_rate")
         equity_risk_premium = st.number_input("Equity Risk Premium (%)", min_value=0.0, max_value=15.0,
-                                               value=float(st.session_state.st_vals.get('equity_risk_premium', 5.13)), step=0.01)
+                                               value=float(st.session_state.st_vals.get('equity_risk_premium', 5.13)), step=0.01, key="equity_risk_premium")
     with col2:
         WACC = st.number_input("WACC (%)", min_value=0.0, max_value=30.0,
-                                value=float(st.session_state.st_vals.get('WACC', 9.6)), step=0.1)
+                                value=float(st.session_state.st_vals.get('WACC', 9.6)), step=0.1, key="WACC")
 
     st.header("Reinvestment Rates")
     col1, col2 = st.columns(2)
     with col1:
         reinvestment_rate_5y = st.number_input("Reinvestment Rate 5y (%)", min_value=0.0, max_value=100.0,
-                                                value=float(st.session_state.st_vals.get('reinvestment_rate_5y', 50.0)), step=0.1)
+                                                value=float(st.session_state.st_vals.get('reinvestment_rate_5y', 50.0)), step=0.1, key="reinvestment_rate_5y")
     with col2:
         reinvestment_rate_5_10y = st.number_input("Reinvestment Rate 5-10y (%)", min_value=0.0, max_value=100.0,
-                                                   value=float(st.session_state.st_vals.get('reinvestment_rate_5_10y', 50.0)), step=0.1)
+                                                   value=float(st.session_state.st_vals.get('reinvestment_rate_5_10y', 50.0)), step=0.1, key="reinvestment_rate_5_10y")
 
     st.header("Standard Deviations")
     col1, col2 = st.columns(2)
