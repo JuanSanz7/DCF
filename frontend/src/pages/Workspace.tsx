@@ -177,30 +177,31 @@ export default function Workspace() {
         <div className="side min-h-[calc(100vh-7rem)]">
           <div className="mx-auto max-w-[1500px] px-4 py-5 lg:px-6">
             {errors.length > 0 && <div className="mb-4 rounded-lg bg-white p-3"><IssueList issues={visibleIssues(issues).filter(i => i.severity === 'error')} /></div>}
-            <div className="grid items-start gap-5 lg:grid-cols-2 xl:grid-cols-3">
-              <div className="space-y-5">
-          <section className="side-card">
+          <section className="rounded-xl bg-white/[0.07] px-5 py-4 ring-1 ring-cyan/40">
             <div className="side-title">Company
               <div className="flex gap-1.5">
-                <button className="side-btn" onClick={() => setImportOpen(true)}><Upload size={13} /> Load data</button>
-                <button className="side-btn" onClick={() => { localStorage.removeItem(DRAFT); nav('/new?ticker=NEW'); window.location.reload() }}><Plus size={13} /> New</button>
+                <button className="inline-flex h-9 items-center gap-2 rounded-lg bg-cyan px-4 text-[13.5px] font-semibold text-navy-950 shadow-[0_6px_16px_rgba(0,169,224,.35)] hover:bg-cyan-600" onClick={() => setImportOpen(true)}><Upload size={15} /> Load data</button>
+                <button className="inline-flex h-9 items-center gap-2 rounded-lg border-2 border-cyan px-4 text-[13.5px] font-semibold text-on-navy hover:bg-cyan/15" onClick={() => { localStorage.removeItem(DRAFT); nav('/new?ticker=NEW'); window.location.reload() }}><Plus size={15} /> New valuation</button>
               </div>
             </div>
-            <div className="grid grid-cols-[90px_1fr_64px] gap-2">
+            <div className="grid gap-3 sm:grid-cols-[140px_minmax(0,1fr)_100px] lg:max-w-4xl">
               <label><span className="label">Ticker</span><input className="field mt-0.5 font-semibold uppercase" value={inputs.company.ticker} onChange={e => update(d => ({ ...d, company: { ...d.company, ticker: e.target.value.toUpperCase() } }))} /></label>
               <label><span className="label">Company name</span><input className="field mt-0.5" value={inputs.company.name ?? ''} onChange={e => update(d => ({ ...d, company: { ...d.company, name: e.target.value } }))} /></label>
               <label><span className="label">Currency</span><input className="field mt-0.5 uppercase" maxLength={3} value={inputs.company.currency} onChange={e => update(d => ({ ...d, company: { ...d.company, currency: e.target.value.toUpperCase() } }))} /></label>
             </div>
           </section>
-
+            <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+              <div className="space-y-5">
+          <section className="side-card">
+            <div className="side-title">Discount rate</div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2">{RISK.map(k => cell(k))}</div>
+            <WaccLine base={base} wacc={val.data?.wacc ?? null} />
+          </section>
           <section className="side-card">
             <div className="side-title">Financial information <span className="text-[11px] font-normal text-on-navy-3">millions, except price</span></div>
             <div className="grid grid-cols-3 gap-x-2 gap-y-2">{FIN.map(k => cell(k, { fixed: true }))}</div>
             <p className="mt-2 text-[12px] text-on-navy-2">Implied NOPAT = EBIT × (1 − tax): <b className="text-on-navy">{fmtNum(nopat, 0)}m {cur}</b></p>
           </section>
-
-              </div>
-              <div className="space-y-5">
           <section className="side-card">
             <div className="side-title">Growth & reinvestment
               <span className="flex items-center gap-1 text-[11px] font-normal text-on-navy-3">value · std. dev.</span></div>
@@ -210,7 +211,8 @@ export default function Workspace() {
             </div>
             <ImpliedRoic inputs={inputs} />
           </section>
-
+              </div>
+              <div className="space-y-5">
           <section className="side-card">
             <div className="side-title">Model</div>
             <div className="space-y-2 text-[12.5px]">
@@ -225,15 +227,6 @@ export default function Workspace() {
               {term.roic_mode === 'absolute' && <div className="grid grid-cols-2 gap-2">{cell('terminal_roic', { fixed: true })}</div>}
             </div>
           </section>
-
-              </div>
-              <div className="space-y-5">
-          <section className="side-card">
-            <div className="side-title">Discount rate</div>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-2">{RISK.map(k => cell(k))}</div>
-            <WaccLine base={base} wacc={val.data?.wacc ?? null} />
-          </section>
-
           <div className="side-card"><SimPanel inputs={inputs} update={update} randomKeys={randomKeys} specs={specs} /></div>
               </div>
             </div>

@@ -14,21 +14,17 @@ export async function exportPng(el: HTMLElement, name: string) {
   download(await capture(el), name + '.png')
 }
 
-/** A4 portrait PDF; tall reports continue on further pages. */
+/** One A4 page: the report is scaled to fit (landscape when it is wider than tall). */
 export async function exportPdf(el: HTMLElement, name: string) {
   const [{ jsPDF }, url] = await Promise.all([import('jspdf'), capture(el)])
   const img = new Image()
   img.src = url
   await img.decode()
-  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true })
-  const W = 210, H = 297, M = 8
-  const w = W - 2 * M
-  const h = (img.height / img.width) * w
-  let y = 0
-  for (let page = 0; y < h; page++) {
-    if (page) pdf.addPage()
-    pdf.addImage(url, 'PNG', M, M - y, w, h, undefined, 'FAST')
-    y += H - 2 * M
-  }
+  const landscape = img.width > img.height
+  const pdf = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'mm', format: 'a4', compress: true })
+  const W = landscape ? 297 : 210, H = landscape ? 210 : 297, M = 7
+  const k = Math.min((W - 2 * M) / img.width, (H - 2 * M) / img.height)
+  const w = img.width * k, h = img.height * k
+  pdf.addImage(url, 'PNG', (W - w) / 2, M, w, h, undefined, 'FAST')
   pdf.save(name + '.pdf')
 }
