@@ -1,0 +1,19 @@
+# Render Blueprint: free web service built from the Dockerfile.
+# Render > New > Blueprint > pick this repository. It asks for the two values marked sync: false.
+services:
+  - type: web
+    name: value-field
+    runtime: docker
+    plan: free
+    branch: v2              # change to main after merging
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: DCF_DATABASE_URL     # Neon > your project > Connect > copy the connection string
+        sync: false
+      - key: DCF_INVITE_CODE      # optional: the code friends need to create an account
+        sync: false
+      - key: DCF_MAX_PATHS        # the free instance has 512 MB of memory
+        value: "200000"
+      - key: DCF_SECURE_COOKIES
+        value: "1"

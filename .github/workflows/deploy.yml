@@ -1,0 +1,29 @@
+name: Deploy to Hugging Face (manual; Docker Spaces need a PRO account)
+on:
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that the Hugging Face token is configured
+        env: { HF_TOKEN: "${{ secrets.HF_TOKEN || secrets.HUGGINGFACE }}" }
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::warning::Add a repository secret named HF_TOKEN or HUGGINGFACE (Settings > Secrets and variables > Actions) to deploy."
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/checkout@v4
+        if: env.SKIP != '1'
+      - uses: actions/setup-python@v5
+        if: env.SKIP != '1'
+        with: { python-version: "3.12" }
+      - name: Publish the Space
+        if: env.SKIP != '1'
+        run: pip install -q huggingface_hub && python deploy/huggingface.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN || secrets.HUGGINGFACE }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID || secrets.NEON_PROJECT_ID }}
+          DCF_DATABASE_URL: ${{ secrets.DCF_DATABASE_URL }}
+          DCF_INVITE_CODE: ${{ secrets.DCF_INVITE_CODE }}
