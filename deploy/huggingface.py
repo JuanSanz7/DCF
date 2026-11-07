@@ -3,8 +3,11 @@
 Environment: HF_TOKEN (write token), optional HF_SPACE ("user/name" or just "name"),
 DCF_DATABASE_URL and DCF_INVITE_CODE (copied into the Space's secrets).
 """
+import json
 import os
 import shutil
+import urllib.parse
+import urllib.request
 import tempfile
 from pathlib import Path
 
@@ -24,7 +27,46 @@ short_description: DCF valuation with Monte Carlo simulation
 
 """
 
-api = HfApi(token=os.environ["HF_TOKEN"])
+def neon_database_url() -> str | None:
+    """Asks Neon for the connection string of the project's main branch (no pooler)."""
+    key = os.environ.get("NEON_API_KEY")
+    if not key:
+        return None
+
+    def get(path):
+        req = urllib.request.Request("https://console.neon.tech/api/v2" + path,
+                                     headers={"Authorization": f"Bearer {key}", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)
+
+    pid = os.environ.get("NEON_PROJECT_ID")
+    if not pid:
+        projects = get("/projects")["projects"]
+        if len(projects) != 1:
+            raise SystemExit(f"Found {len(projects)} Neon projects; set the NEON_PROJECT_ID variable to choose one.")
+        pid = projects[0]["id"]
+    branches = get(f"/projects/{pid}/branches")["branches"]
+    branch = next((b for b in branches if b.get("default")), branches[0])
+    dbs = get(f"/projects/{pid}/branches/{branch['id']}/databases")["databases"]
+    db = next((d for d in dbs if d["name"] == "neondb"), dbs[0])
+    q = urllib.parse.urlencode({"branch_id": branch["id"], "database_name": db["name"],
+                                "role_name": db["owner_name"], "pooled": "false"})
+    uri = get(f"/projects/{pid}/connection_uri?{q}")["uri"]
+    print(f"Neon database: project {pid}, branch {branch['name']}, database {db['name']}")
+    return uri
+
+
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE")
+if not token:
+    raise SystemExit("No Hugging Face token: add a repository secret named HF_TOKEN (or HUGGINGFACE).")
+if not os.environ.get("DCF_DATABASE_URL"):
+    url = neon_database_url()
+    if url:
+        os.environ["DCF_DATABASE_URL"] = url
+    else:
+        print("WARNING: no database configured; saved valuations will be lost when the Space restarts.")
+
+api = HfApi(token=token)
 user = api.whoami()["name"]
 space = os.environ.get("HF_SPACE") or "value-field"
 repo_id = space if "/" in space else f"{user}/{space}"
