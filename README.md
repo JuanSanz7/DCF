@@ -24,7 +24,7 @@ With Python 3.10+ and Node 18+: `./run.sh` (macOS/Linux) or `run.bat` (Windows),
 
 ### Bringing in v1 valuations
 
-In the old Streamlit app, download the ZIP from "Export / Import Analyses", then upload it in House assumptions → "Bring in valuations from the first version". v1 kept only rounded results, so these runs appear in each company's history but can't be reopened in the workspace.
+In the old Streamlit app, download the ZIP from "Export / Import Analyses", then upload it in Archive → "Import v1 archive". v1 kept only rounded results, so these runs appear in each company's history but can't be reopened in the workspace.
 
 ## How to use it
 
@@ -98,7 +98,7 @@ backend/dcfmc/core    parameters, distributions, advisor, inputs, engine, stats,
 backend/dcfmc/io      number parser, template reader, Google Sheets / Excel, Yahoo Finance, Excel report
 backend/dcfmc/store   register (SQLAlchemy: SQLite or Postgres), user accounts, legacy importer
 backend/dcfmc/api     FastAPI app (JSON API + static UI)
-frontend/src          React app: register, company history, workspace, settings
+frontend/src          React app: valuation (inputs / results tabs), archive, company history
 deploy/               Hugging Face deployment script (run by .github/workflows/deploy.yml)
 legacy/               v1 Streamlit / Tkinter code, kept for reference
 ```

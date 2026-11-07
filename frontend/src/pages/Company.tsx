@@ -37,7 +37,7 @@ export default function Company() {
     <div className="mx-auto max-w-6xl px-4 py-10 lg:px-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-[13px] text-ink-3"><Link to="/" className="hover:text-ink">Register</Link> / {ticker}</p>
+          <p className="text-[13px] text-ink-3"><Link to="/archive" className="hover:text-ink">Archive</Link> / {ticker}</p>
           <h1 className="text-[28px] font-semibold leading-tight">{c.data.name || ticker}</h1>
           <p className="mt-1 text-[14px] text-ink-2">{runs.length} valuation{runs.length === 1 ? '' : 's'} since {fmtDate(runs[0].created_at)}. Each mark is one run: the bar spans P10–P90 of intrinsic value, the dot is the median.{!symbol && ' Add a Yahoo symbol in the workspace to draw the price line.'}</p>
         </div>

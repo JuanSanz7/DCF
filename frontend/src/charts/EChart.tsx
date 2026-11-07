@@ -9,9 +9,9 @@ echarts.use([BarChart, CustomChart, HeatmapChart, LineChart, ScatterChart, GridC
   MarkLineComponent, TooltipComponent, VisualMapComponent, CanvasRenderer])
 
 export const C = {
-  ink: '#14213d', ink2: '#44506a', ink3: '#7a8499', rule: '#dde1d8', grid: '#eceee8',
-  value: '#0e8fae', valueSoft: 'rgba(18,179,214,0.16)', valueMid: 'rgba(18,179,214,0.35)',
-  bar: '#7cc9dd', barEdge: '#3a9fbb',
+  ink: '#0a1f4d', ink2: '#44506a', ink3: '#7a8499', rule: '#dde1d8', grid: '#eceee8',
+  value: '#0077b6', valueSoft: 'rgba(18,179,214,0.16)', valueMid: 'rgba(18,179,214,0.35)',
+  bar: '#7fd0ef', barEdge: '#2a9fd0',
   market: '#7b2d8e', marketSoft: 'rgba(123,45,142,0.12)', mean: '#d1342f', bad: '#b42318', warn: '#a85d00',
   s1: 'rgba(22,163,74,0.10)', s2: 'rgba(234,170,0,0.12)', s3: 'rgba(220,38,38,0.09)',
 }

@@ -1,12 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clsx } from 'clsx'
 import { useEffect, useState } from 'react'
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { Spinner } from './components/ui'
 import { api, type AuthStatus } from './lib/api'
 import Company from './pages/Company'
 import Portfolio from './pages/Portfolio'
-import Settings from './pages/Settings'
 import Workspace from './pages/Workspace'
 
 function Mark() {
@@ -18,6 +17,7 @@ function Mark() {
 export default function App() {
   const auth = useQuery({ queryKey: ['auth'], queryFn: api.authStatus })
   const qc = useQueryClient()
+  const location = useLocation()
   useEffect(() => {
     const h = () => qc.invalidateQueries({ queryKey: ['auth'] })
     window.addEventListener('dcf:unauthorized', h)
@@ -33,11 +33,10 @@ export default function App() {
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 h-12 border-b border-white/10 bg-navy-950 text-on-navy">
         <div className="mx-auto flex h-full max-w-[1600px] items-center gap-4 px-4 sm:gap-6 lg:px-6">
-          <NavLink to="/" className="flex items-center gap-2 font-cond text-[16px] font-semibold"><Mark /> <span className="hidden sm:inline">Value field</span></NavLink>
+          <NavLink to="/new" className="flex items-center gap-2 font-cond text-[16px] font-semibold"><Mark /> <span className="hidden sm:inline">Value field</span></NavLink>
           <nav className="flex items-center gap-1">
-            <NavLink to="/" end className={link}>Register</NavLink>
-            <NavLink to="/new" className={link}>Workspace</NavLink>
-            <NavLink to="/settings" className={link}><span className="sm:hidden">Settings</span><span className="hidden sm:inline">House assumptions</span></NavLink>
+            <NavLink to="/new" className={({ isActive }) => link({ isActive: isActive || location.pathname.startsWith('/v/') })}>Valuation</NavLink>
+            <NavLink to="/archive" className={({ isActive }) => link({ isActive: isActive || location.pathname.startsWith('/c/') })}>Archive</NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-2 text-[13px] text-on-navy-2">
             <span className="hidden sm:inline">{st.user.username}</span>
@@ -53,11 +52,12 @@ export default function App() {
       )}
       <main>
         <Routes>
-          <Route path="/" element={<Portfolio />} />
+          <Route path="/" element={<Navigate to="/new" replace />} />
+          <Route path="/archive" element={<Portfolio />} />
           <Route path="/new" element={<Workspace />} />
           <Route path="/v/:id" element={<Workspace />} />
           <Route path="/c/:ticker" element={<Company />} />
-          <Route path="/settings" element={<Settings />} />
+          <Route path="*" element={<Navigate to="/new" replace />} />
         </Routes>
       </main>
     </div>

@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Plus, Upload } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Empty, RangeBar, Spinner } from '../components/ui'
@@ -26,10 +26,10 @@ export default function Portfolio() {
     <div className="mx-auto max-w-6xl px-4 py-10 lg:px-6">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-semibold leading-tight">Valuation register</h1>
-          <p className="mt-1 max-w-2xl text-[14px] text-ink-2">The latest simulation of every company you have valued. Teal bars span the 10th to 90th percentile of intrinsic value; the magenta tick is the price on the day of the run.</p>
+          <h1 className="text-[28px] font-semibold leading-tight text-navy-800">Archive</h1>
+          <p className="mt-1 max-w-2xl text-[14px] text-ink-2">Your saved valuations, latest run per company. The blue bar spans the 10th to 90th percentile of intrinsic value; the purple tick is the price on the day of the run. Open a company to see its history.</p>
         </div>
-        <Link to="/new" className="btn-primary h-9"><Plus size={15} /> New valuation</Link>
+        <div className="flex gap-2"><LegacyImport /><Link to="/new" className="btn-primary h-9"><Plus size={15} /> New valuation</Link></div>
       </div>
       {rows.length === 0 ? (
         <Empty title="No valuations yet" action={<Link to="/new" className="btn-primary">Start your first valuation</Link>}>
@@ -88,5 +88,17 @@ export function ProbPill({ p }: { p: number | null }) {
       <span className="relative h-1.5 w-12 rounded-full bg-market-soft"><span className="absolute inset-y-0 left-0 rounded-full bg-value" style={{ width: w }} /></span>
       <span className={p >= 0.5 ? 'font-semibold text-value' : 'text-market'}>{fmtPct(p, 0)}</span>
     </span>
+  )
+}
+
+function LegacyImport() {
+  const qc = useQueryClient()
+  const m = useMutation({ mutationFn: (f: File) => api.importLegacy(f), onSuccess: r => { qc.invalidateQueries({ queryKey: ['companies'] }); alert(`Imported ${r.imported} valuation(s) from v1${r.skipped ? `, skipped ${r.skipped} already present` : ''}.`) },
+    onError: (e: Error) => alert(e.message) })
+  return (
+    <label className="btn h-9 cursor-pointer" title="Upload the ZIP downloaded from the old Streamlit app (Export / Import Analyses)">
+      {m.isPending ? <Spinner /> : <Upload size={14} />} Import v1 archive
+      <input type="file" accept=".zip" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) m.mutate(f); e.target.value = '' }} />
+    </label>
   )
 }

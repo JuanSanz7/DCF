@@ -9,15 +9,15 @@
   --color-panel: #ffffff;
   --color-rule: #dde1d8;
   --color-rule-strong: #c4cabd;
-  --color-ink: #14213d;
+  --color-ink: #0a1f4d;
   --color-ink-2: #44506a;
   --color-ink-3: #7a8499;
 
   /* data colours: value (teal) vs market (magenta) */
-  --color-value: #0e7c86;
-  --color-value-soft: #d6eeef;
-  --color-market: #b4236a;
-  --color-market-soft: #f6dde9;
+  --color-value: #0077b6;
+  --color-value-soft: #d9eef8;
+  --color-market: #7b2d8e;
+  --color-market-soft: #efe1f3;
   --color-warn: #a85d00;
   --color-warn-soft: #fbefd9;
   --color-bad: #b42318;
@@ -25,13 +25,13 @@
   --color-good: #1d7a46;
 
   /* Streamlit-era navy + cyan, kept for continuity with v1 */
-  --color-navy-950: #041d2b;
-  --color-navy-900: #06283a;
-  --color-navy-800: #0b344a;
-  --color-navy-700: #0f415c;
-  --color-navy-600: #175676;
-  --color-cyan: #12b3d6;
-  --color-cyan-600: #0fa3c4;
+  --color-navy-950: #001640;
+  --color-navy-900: #001d52;
+  --color-navy-800: #002364;
+  --color-navy-700: #0b3283;
+  --color-navy-600: #1d4597;
+  --color-cyan: #00a9e0;
+  --color-cyan-600: #0091c2;
   --color-on-navy: #eaf6ff;
   --color-on-navy-2: rgba(234, 246, 255, 0.72);
   --color-on-navy-3: rgba(234, 246, 255, 0.5);
@@ -73,7 +73,8 @@
   .side { background: linear-gradient(180deg, var(--color-navy-800) 0%, var(--color-navy-900) 100%); color: var(--color-on-navy); }
   .side .label { color: var(--color-on-navy-2); }
   .side .hint { color: var(--color-on-navy-3); }
-  .side-title { @apply mb-2 flex items-center justify-between font-cond text-[14px] font-semibold tracking-wide text-on-navy; }
+  .side-title { @apply mb-3 flex items-center justify-between border-b border-cyan/60 pb-1.5 font-cond text-[15px] font-semibold tracking-wide text-on-navy; }
+  .side-card { @apply rounded-xl bg-white/[0.04] p-4 ring-1 ring-white/10; }
   .side .field { @apply h-7 border-transparent bg-white text-[12.5px] text-ink; }
   .side-btn { @apply inline-flex h-7 items-center gap-1.5 rounded-md border border-white/20 bg-white/10 px-2.5 text-[12px] font-medium text-on-navy hover:bg-white/20; }
   .side-seg { @apply inline-flex rounded-md bg-navy-950/60 p-0.5; }

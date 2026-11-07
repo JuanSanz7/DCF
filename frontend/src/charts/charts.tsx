@@ -182,12 +182,12 @@ export function HeatmapChart({ h, specs, mode, price, currency, height = 360 }: 
       visualMap: mode === 'value'
         ? { type: 'piecewise', dimension: 2, right: 0, top: 'middle', orient: 'vertical', textStyle: { color: C.ink2, fontSize: 11 },
             pieces: [
-              { min: price * 1.3, label: `≥ 1.3× price`, color: '#0b5f67' },
-              { min: price, max: price * 1.3, label: 'price to 1.3×', color: '#5fb3b8' },
-              { min: price * 0.8, max: price, label: '0.8× to price', color: '#eab8cf' },
-              { max: price * 0.8, label: '< 0.8× price', color: '#b4236a' },
+              { min: price * 1.3, label: `≥ 1.3× price`, color: '#00507d' },
+              { min: price, max: price * 1.3, label: 'price to 1.3×', color: '#7fc4e6' },
+              { min: price * 0.8, max: price, label: '0.8× to price', color: '#d9bfe0' },
+              { max: price * 0.8, label: '< 0.8× price', color: '#7b2d8e' },
             ] }
-        : { type: 'continuous', dimension: 2, min: 0, max: 1, right: 0, top: 'middle', calculable: false, itemHeight: 140, text: ['100%', '0%'], textStyle: { color: C.ink2, fontSize: 11 }, inRange: { color: ['#d27fa4', '#f4eef1', '#0e7c86'] } },
+        : { type: 'continuous', dimension: 2, min: 0, max: 1, right: 0, top: 'middle', calculable: false, itemHeight: 140, text: ['100%', '0%'], textStyle: { color: C.ink2, fontSize: 11 }, inRange: { color: ['#b07cc0', '#f3eef5', '#0077b6'] } },
       series: [{ type: 'heatmap', data, itemStyle: { borderColor: '#fff', borderWidth: 1 }, label: { show: true, fontSize: 10, color: C.ink,
         formatter: (q: unknown) => { const v = (q as { value: number[] }).value[2]; return v == null ? '' : mode === 'value' ? num(v, 0) : fmtPct(v, 0) } } }],
       ...(vals.length ? {} : { title: { text: 'No data' } }),

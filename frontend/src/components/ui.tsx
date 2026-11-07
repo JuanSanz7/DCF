@@ -136,9 +136,9 @@ export function RangeBar({ p10, median, p90, price, lo, hi, width = 180 }: {
   return (
     <svg width={width} height={20} role="img" aria-label={`P10 ${p10.toFixed(0)}, median ${median.toFixed(0)}, P90 ${p90.toFixed(0)}, price ${price?.toFixed(0)}`}>
       <line x1={4} x2={width - 4} y1={10} y2={10} stroke="#eceee8" strokeWidth={2} />
-      <rect x={x(p10)} y={5} width={Math.max(x(p90) - x(p10), 2)} height={10} rx={3} fill="rgba(14,124,134,0.22)" stroke="#0e7c86" strokeWidth={1} />
-      <circle cx={x(median)} cy={10} r={3.5} fill="#0e7c86" stroke="#fff" strokeWidth={1.25} />
-      {price != null && <line x1={x(price)} x2={x(price)} y1={1} y2={19} stroke="#b4236a" strokeWidth={2} />}
+      <rect x={x(p10)} y={5} width={Math.max(x(p90) - x(p10), 2)} height={10} rx={3} fill="rgba(0,119,182,0.18)" stroke="#0077b6" strokeWidth={1} />
+      <circle cx={x(median)} cy={10} r={3.5} fill="#0077b6" stroke="#fff" strokeWidth={1.25} />
+      {price != null && <line x1={x(price)} x2={x(price)} y1={1} y2={19} stroke="#7b2d8e" strokeWidth={2} />}
     </svg>
   )
 }

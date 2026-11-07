@@ -2,7 +2,7 @@ import * as Tabs from '@radix-ui/react-tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { clsx } from 'clsx'
 import { ChevronDown, CircleHelp, Dice5, Download, Plus, Save, SlidersHorizontal, Trash2, Upload } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { CdfChart, ConvergenceChart, FanChart, HeatmapChart, ScatterExplorer, Tornado, ValueField } from '../charts/charts'
 import { DistEditor } from '../components/DistEditor'
@@ -11,6 +11,7 @@ import { Empty, IssueList, NumberField, Segmented, Spinner, Tip } from '../compo
 import { api, type BaseCase, type Dist, type Heatmap, type Inputs, type Issue, type ParamInput, type ParamSpec, type Summary } from '../lib/api'
 import { distLabel, fmtDate, fmtMoney, fmtNum, fmtPct, fmtSignedPct, fmtUnit, isPct, toDisplay } from '../lib/format'
 import { useMeta } from '../lib/meta'
+import { exportPdf, exportPng } from '../lib/exportReport'
 
 const DRAFT = 'dcf:draft'
 type Model = NonNullable<Inputs['model']>
@@ -56,6 +57,7 @@ export default function Workspace() {
   const [label, setLabel] = useState('')
   const [notes, setNotes] = useState('')
   const [simErr, setSimErr] = useState<string | null>(null)
+  const [tab, setTab] = useState<'inputs' | 'results'>(id ? 'results' : 'inputs')
 
   // ---------------------------------------------------------------- load
   const saved = useQuery({ queryKey: ['valuation', id], queryFn: () => api.valuation(id!), enabled: !!id })
@@ -105,7 +107,7 @@ export default function Workspace() {
   const sim = useMutation({
     mutationFn: () => api.simulate(inputs!),
     onMutate: () => setSimErr(null),
-    onSuccess: r => { setSummary(r.summary); setRunToken(r.run_token); setDirtySinceRun(false); setSavedId(null); setSavedAt(null) },
+    onSuccess: r => { setSummary(r.summary); setRunToken(r.run_token); setDirtySinceRun(false); setSavedId(null); setSavedAt(null); setTab('results'); window.scrollTo({ top: 0 }) },
     onError: (e: Error) => setSimErr(e.message),
   })
   const save = useMutation({
@@ -128,7 +130,7 @@ export default function Workspace() {
         return d
       })
     }
-    setSummary(null); setRunToken(null); setSavedId(null); setDirtySinceRun(true)
+    setSummary(null); setRunToken(null); setSavedId(null); setDirtySinceRun(true); setTab('inputs')
     if (id) nav('/new', { replace: true })
   }
 
@@ -150,11 +152,34 @@ export default function Workspace() {
   const stage2 = (model.stage2_years ?? 5) > 0 && model.stage2_mode !== 'fade'
 
   return (
-    <div className="lg:flex">
-      {/* ================================================= sidebar: inputs */}
-      <aside className="side lg:sticky lg:top-12 lg:h-[calc(100vh-3rem)] lg:w-[460px] lg:shrink-0 lg:overflow-y-auto">
-        <div className="space-y-5 px-4 pb-24 pt-4">
-          <section>
+    <div>
+      {/* ================================================= valuation header: tabs + run */}
+      <div className="sticky top-12 z-20 border-b border-white/10 bg-navy-900 text-on-navy">
+        <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5 lg:px-6">
+          <div className="min-w-0">
+            <p className="truncate font-cond text-[17px] font-semibold text-white">{inputs.company.name || inputs.company.ticker} <span className="text-[13px] font-normal text-on-navy-2">{inputs.company.ticker} · {cur}</span></p>
+          </div>
+          <div className="side-seg" role="tablist">
+            <button role="tab" aria-checked={tab === 'inputs'} aria-selected={tab === 'inputs'} onClick={() => setTab('inputs')} className="!h-7 !px-4 !text-[13px]">Inputs</button>
+            <button role="tab" aria-checked={tab === 'results'} aria-selected={tab === 'results'} onClick={() => setTab('results')} className="!h-7 !px-4 !text-[13px]">Results{summary?.histogram && dirtySinceRun ? ' (outdated)' : ''}</button>
+          </div>
+          <div className="ml-auto flex items-center gap-3">
+            <BaseInline base={base} currency={cur} />
+            <button className="flex h-9 items-center gap-2 rounded-lg bg-run px-4 text-[13.5px] font-semibold text-white shadow-[0_8px_18px_rgba(22,163,74,.3)] hover:brightness-110 disabled:opacity-60"
+              disabled={errors.length > 0 || sim.isPending} onClick={() => sim.mutate()} title={errors.length ? 'Fix the inputs marked in red first' : undefined}>
+              {sim.isPending ? <Spinner /> : <Dice5 size={16} />} Run simulation · {(inputs.simulation?.n ?? 20000).toLocaleString('en-US')} paths
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {tab === 'inputs' ? (
+        <div className="side min-h-[calc(100vh-7rem)]">
+          <div className="mx-auto max-w-[1500px] px-4 py-5 lg:px-6">
+            {errors.length > 0 && <div className="mb-4 rounded-lg bg-white p-3"><IssueList issues={visibleIssues(issues).filter(i => i.severity === 'error')} /></div>}
+            <div className="grid items-start gap-5 lg:grid-cols-2 xl:grid-cols-3">
+              <div className="space-y-5">
+          <section className="side-card">
             <div className="side-title">Company
               <div className="flex gap-1.5">
                 <button className="side-btn" onClick={() => setImportOpen(true)}><Upload size={13} /> Load data</button>
@@ -168,13 +193,15 @@ export default function Workspace() {
             </div>
           </section>
 
-          <section>
+          <section className="side-card">
             <div className="side-title">Financial information <span className="text-[11px] font-normal text-on-navy-3">millions, except price</span></div>
             <div className="grid grid-cols-3 gap-x-2 gap-y-2">{FIN.map(k => cell(k, { fixed: true }))}</div>
             <p className="mt-2 text-[12px] text-on-navy-2">Implied NOPAT = EBIT × (1 − tax): <b className="text-on-navy">{fmtNum(nopat, 0)}m {cur}</b></p>
           </section>
 
-          <section>
+              </div>
+              <div className="space-y-5">
+          <section className="side-card">
             <div className="side-title">Growth & reinvestment
               <span className="flex items-center gap-1 text-[11px] font-normal text-on-navy-3">value · std. dev.</span></div>
             <div className="grid grid-cols-2 gap-x-3 gap-y-2">
@@ -184,13 +211,7 @@ export default function Workspace() {
             <ImpliedRoic inputs={inputs} />
           </section>
 
-          <section>
-            <div className="side-title">Discount rate</div>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-2">{RISK.map(k => cell(k))}</div>
-            <WaccLine base={base} wacc={val.data?.wacc ?? null} />
-          </section>
-
-          <section>
+          <section className="side-card">
             <div className="side-title">Model</div>
             <div className="space-y-2 text-[12.5px]">
               <div className="flex items-center justify-between gap-2"><span className="text-on-navy-2">Forecast years</span>
@@ -205,35 +226,34 @@ export default function Workspace() {
             </div>
           </section>
 
-          <SimPanel inputs={inputs} update={update} randomKeys={randomKeys} specs={specs} />
-        </div>
-        <div className="sticky bottom-0 border-t border-white/10 bg-navy-900/95 px-4 py-3 backdrop-blur">
-          <button className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-run text-[14px] font-semibold text-white shadow-[0_10px_22px_rgba(22,163,74,.25)] hover:brightness-110 disabled:opacity-60"
-            disabled={errors.length > 0 || sim.isPending} onClick={() => sim.mutate()}>
-            {sim.isPending ? <Spinner /> : <Dice5 size={16} />} Run simulation · {(inputs.simulation?.n ?? 20000).toLocaleString('en-US')} paths
-          </button>
-          {errors.length > 0 && <p className="mt-1.5 text-center text-[11.5px] text-on-navy-2">Fix the inputs marked in red to run.</p>}
-        </div>
-      </aside>
+              </div>
+              <div className="space-y-5">
+          <section className="side-card">
+            <div className="side-title">Discount rate</div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2">{RISK.map(k => cell(k))}</div>
+            <WaccLine base={base} wacc={val.data?.wacc ?? null} />
+          </section>
 
-      {/* ================================================= results */}
-      <main className="min-w-0 flex-1 space-y-5 bg-white px-4 py-5 lg:px-8">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-[24px] font-semibold">{inputs.company.name || inputs.company.ticker}<span className="ml-2 text-[15px] font-normal text-ink-3">{inputs.company.ticker} · {cur}</span></h1>
-          <BaseInline base={base} currency={cur} />
+          <div className="side-card"><SimPanel inputs={inputs} update={update} randomKeys={randomKeys} specs={specs} /></div>
+              </div>
+            </div>
+            {issues.some(i => i.severity === 'warning') && <div className="mt-5 rounded-lg bg-white p-3"><IssueList issues={visibleIssues(issues).filter(i => i.severity === 'warning')} /></div>}
+          </div>
         </div>
-        <IssueList issues={visibleIssues(issues)} />
-        {simErr && <p className="rounded-md bg-bad-soft px-3 py-2 text-[13px] text-bad">{simErr}</p>}
-        {summary?.histogram ? (
-          <Results s={summary} specs={specs} currency={cur} runToken={runToken} savedId={savedId} stale={dirtySinceRun}
-            savedAt={savedAt} label={label} notes={notes} setLabel={setLabel} setNotes={setNotes} inputs={inputs}
-            onSave={() => save.mutate()} saving={save.isPending} saveError={save.error?.message ?? null} ticker={inputs.company.ticker} />
-        ) : (
-          <Empty title="Run the simulation to see the results">
-            Fill in the inputs on the left (or load them with "Load data"), give the uncertain ones a standard deviation, and press "Run simulation".
-          </Empty>
-        )}
-      </main>
+      ) : (
+        <main className="mx-auto max-w-[1500px] space-y-5 bg-white px-4 py-5 lg:px-6">
+          {simErr && <p className="rounded-md bg-bad-soft px-3 py-2 text-[13px] text-bad">{simErr}</p>}
+          {summary?.histogram ? (
+            <Results s={summary} specs={specs} currency={cur} runToken={runToken} savedId={savedId} stale={dirtySinceRun}
+              savedAt={savedAt} label={label} notes={notes} setLabel={setLabel} setNotes={setNotes} inputs={inputs}
+              onSave={() => save.mutate()} saving={save.isPending} saveError={save.error?.message ?? null} ticker={inputs.company.ticker} />
+          ) : (
+            <Empty title="No results yet" action={<button className="btn" onClick={() => setTab('inputs')}>Go to the inputs</button>}>
+              Fill in the inputs (or load them with "Load data"), give the uncertain ones a standard deviation, and press "Run simulation".
+            </Empty>
+          )}
+        </main>
+      )}
 
       {editing && specs[editing] && (
         <DistEditor open onOpenChange={o => !o && setEditing(null)} spec={specs[editing]} param={inputs.params[editing] ?? { value: null }}
@@ -356,7 +376,7 @@ function SimPanel({ inputs, update, randomKeys, specs }: { inputs: Inputs; updat
 
 function BaseInline({ base, currency }: { base: BaseCase | null; currency: string }) {
   if (!base?.value_per_share) return null
-  return <p className="text-[13px] text-ink-2">Base case <b className="text-ink">{fmtNum(base.value_per_share)} {currency}</b> <span className={(base.upside ?? 0) >= 0 ? 'text-good' : 'text-bad'}>({fmtSignedPct(base.upside)} vs price)</span> · terminal value {fmtPct(base.tv_share, 0)} of EV</p>
+  return <p className="hidden text-[12.5px] text-on-navy-2 md:block">Base case <b className="text-white">{fmtNum(base.value_per_share)} {currency}</b> <span className={(base.upside ?? 0) >= 0 ? 'text-[#7ee2a8]' : 'text-[#ffb4ab]'}>({fmtSignedPct(base.upside)})</span></p>
 }
 
 function Kv({ k, v, accent }: { k: string; v: string; accent?: string }) {
@@ -413,9 +433,27 @@ function Results({ s, specs, currency, runToken, savedId, savedAt, stale, label,
 }) {
   const p = s.percentiles!
   const prob = s.prob_above_price ?? 0
+  const report = useRef<HTMLDivElement>(null)
+  const [exporting, setExporting] = useState<string | null>(null)
+  const fileName = `${ticker}_valuation_${new Date().toISOString().slice(0, 10)}`
+  const doExport = async (kind: 'pdf' | 'png') => {
+    if (!report.current) return
+    setExporting(kind)
+    try { await (kind === 'pdf' ? exportPdf : exportPng)(report.current, fileName) } finally { setExporting(null) }
+  }
   return (
     <div className="space-y-5">
       {stale && <p className="rounded-md bg-warn-soft px-3 py-2 text-[12.5px] text-warn">Inputs changed since this run. Run again to update the results.</p>}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <span className="mr-auto text-[13px] text-ink-3">Download the report</span>
+        <button className="btn" disabled={!!exporting} onClick={() => doExport('pdf')}>{exporting === 'pdf' ? <Spinner /> : <Download size={14} />} PDF</button>
+        <button className="btn" disabled={!!exporting} onClick={() => doExport('png')}>{exporting === 'png' ? <Spinner /> : <Download size={14} />} PNG</button>
+      </div>
+      <div ref={report} className="space-y-5 bg-white">
+      <div className="flex items-baseline justify-between border-b-2 border-cyan pb-2">
+        <h2 className="text-[20px] font-semibold text-navy-800">{inputs.company.name || ticker} <span className="text-[14px] font-normal text-ink-3">{ticker} · {currency}</span></h2>
+        <span className="text-[12.5px] text-ink-3">Intrinsic valuation, DCF Monte Carlo · {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+      </div>
       <div className="card flex flex-wrap items-end gap-x-8 gap-y-3 px-5 py-4">
         <div>
           <p className="label">Probability the value exceeds the price</p>
@@ -428,14 +466,14 @@ function Results({ s, specs, currency, runToken, savedId, savedAt, stale, label,
         <Kv k="Current price" v={fmtNum(s.price)} />
       </div>
 
-      <div className="grid gap-5 2xl:grid-cols-[1.35fr_1fr]">
+      <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
         <div className="card px-3 pt-3">
           <p className="px-2 font-cond text-[14px] font-semibold">Intrinsic value distribution</p>
           <ValueField s={s} currency={currency} />
         </div>
         <SummaryReport s={s} inputs={inputs} specs={specs} currency={currency} />
       </div>
-      <div className="grid gap-5 2xl:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2">
         <div className="card px-3 pt-3">
           <p className="px-2 font-cond text-[14px] font-semibold">Free cash flow projection</p>
           <FanChart s={s} currency={currency} />
@@ -446,7 +484,8 @@ function Results({ s, specs, currency, runToken, savedId, savedAt, stale, label,
           <Tornado s={s} specs={specs} currency={currency} />
         </div>
       </div>
-      <p className="text-[12px] text-ink-3">{s.n_valid.toLocaleString('en-US')} valid paths{s.invalid_fraction > 0 && ` (${fmtPct(s.invalid_fraction, 1)} dropped: terminal WACC too close to growth)`}{s.elapsed_ms != null && ` · computed in ${Math.round(s.elapsed_ms)} ms · seed ${s.seed}`}.</p>
+      <p className="text-[12px] text-ink-3">{s.n_valid.toLocaleString('en-US')} valid paths{s.invalid_fraction > 0 && ` (${fmtPct(s.invalid_fraction, 1)} dropped: terminal WACC too close to growth)`} · seed {s.seed}{s.elapsed_ms != null && ` · computed in ${Math.round(s.elapsed_ms)} ms`}.</p>
+      </div>
 
       <Tabs.Root defaultValue="explore" className="card">
         <Tabs.List className="flex flex-wrap gap-1 border-b border-rule px-3 pt-2">
@@ -463,10 +502,10 @@ function Results({ s, specs, currency, runToken, savedId, savedAt, stale, label,
       </Tabs.Root>
 
       <div className="card p-4">
-        <h3 className="section-title">Save to your register</h3>
+        <h3 className="section-title">Save to your archive</h3>
         {savedId ? (
           <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-[13px] text-ink-2">Saved{savedAt && ` on ${fmtDate(savedAt)}`}. <Link className="text-value underline underline-offset-2" to={`/c/${ticker}`}>See {ticker}'s history</Link>.</p>
+            <p className="text-[13px] text-ink-2">Saved{savedAt && ` on ${fmtDate(savedAt)}`}. <Link className="text-value underline underline-offset-2" to={`/c/${ticker}`}>See {ticker} in the archive</Link>.</p>
             <a className="btn" href={`/api/valuations/${savedId}/export.xlsx`}><Download size={14} /> Excel report</a>
           </div>
         ) : (
