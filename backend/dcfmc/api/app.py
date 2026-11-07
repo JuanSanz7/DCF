@@ -29,7 +29,7 @@ from ..core.stats import heatmap, summarize
 from ..core.validation import validate
 from ..io import report, sheets, template, yahoo
 from ..store import repo, users
-from ..store.db import Store
+from ..store.db import CONFIG_ERRORS, Store
 
 DIST_TA = TypeAdapter(Distribution)
 
@@ -128,7 +128,7 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
     def auth_status(request: Request):
         u = users.get_user(app.state.store, request.state.uid) if request.state.uid else None
         return {"user": u, "signup_open": signup_open, "invite_required": bool(invite),
-                "persistent_storage": app.state.store.persistent}
+                "persistent_storage": app.state.store.persistent, "config_errors": list(CONFIG_ERRORS)}
 
     @app.post("/api/auth/signup")
     def signup(req: Credentials, response: Response):

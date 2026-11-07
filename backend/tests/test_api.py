@@ -140,8 +140,24 @@ def test_session_survives_restart(tmp_path):
 
 
 def test_postgres_url_normalised():
-    from dcfmc.store.db import normalize_url
+    from dcfmc.store.db import DatabaseUrlError, normalize_url
     assert normalize_url("postgres://u:p@h/db?sslmode=require") == "postgresql+psycopg://u:p@h/db?sslmode=require"
+    assert normalize_url("psql 'postgresql://u:p@ep-x.neon.tech/neondb?sslmode=require&channel_binding=require'") == \
+        "postgresql+psycopg://u:p@ep-x.neon.tech/neondb?sslmode=require&channel_binding=require"
+    with pytest.raises(DatabaseUrlError):
+        normalize_url("psql -h pg.neon.tech")
+
+
+def test_bad_database_url_still_starts(tmp_path, monkeypatch):
+    import dcfmc.store.db as db
+    monkeypatch.setenv("DCF_DATABASE_URL", "psql -h pg.neon.tech")
+    monkeypatch.setenv("DCF_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(db, "CONFIG_ERRORS", [])
+    import dcfmc.api.app as appmod
+    monkeypatch.setattr(appmod, "CONFIG_ERRORS", db.CONFIG_ERRORS)
+    c = TestClient(appmod.create_app(static_dir=tmp_path / "none"))
+    st = c.get("/api/auth/status").json()
+    assert st["persistent_storage"] is False and "postgresql://" in st["config_errors"][0]
 
 
 def test_legacy_import(tmp_path):

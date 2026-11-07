@@ -81,7 +81,7 @@ export interface ImportResponse {
 export interface Suggestion { dist: Dist; title: string; rationale: string; recommended: boolean }
 
 export interface User { id: number; username: string }
-export interface AuthStatus { user: User | null; signup_open: boolean; invite_required: boolean; persistent_storage: boolean }
+export interface AuthStatus { user: User | null; signup_open: boolean; invite_required: boolean; persistent_storage: boolean; config_errors?: string[] }
 
 export class ApiError extends Error {
   status: number; detail: unknown

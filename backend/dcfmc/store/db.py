@@ -116,9 +116,24 @@ DEFAULT_SETTINGS = {
 }
 
 
+class DatabaseUrlError(ValueError):
+    pass
+
+
 def normalize_url(url: str) -> str:
-    """Accepts the URL as hosted Postgres providers show it (postgres://, postgresql://)."""
-    url = url.strip()
+    """Accepts the URL as hosted Postgres providers show it: postgres://, postgresql://, or a whole
+    `psql 'postgresql://...'` command copied from the provider's connect dialog."""
+    import re
+    raw = url.strip()
+    if raw.startswith(("sqlite", "postgresql+", "mysql")):
+        return raw
+    m = re.search(r"postgres(?:ql)?://[^\s'\"]+", raw)
+    if not m:
+        raise DatabaseUrlError(
+            "DCF_DATABASE_URL must be a connection string that starts with postgresql:// "
+            "(in Neon: Connect > Connection string, with the password shown). "
+            f"The current value starts with '{raw[:20]}'.")
+    url = m.group(0)
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
     if url.startswith("postgresql://"):
@@ -126,10 +141,17 @@ def normalize_url(url: str) -> str:
     return url
 
 
+CONFIG_ERRORS: list[str] = []
+
+
 def default_db_url() -> str:
     url = os.environ.get("DCF_DATABASE_URL") or os.environ.get("DATABASE_URL")
     if url:
-        return normalize_url(url)
+        try:
+            return normalize_url(url)
+        except DatabaseUrlError as e:  # start anyway (temporary storage) and explain in the UI
+            CONFIG_ERRORS.append(str(e))
+            print("CONFIGURATION ERROR:", e, flush=True)
     data_dir = Path(os.environ.get("DCF_DATA_DIR", Path.home() / ".dcfmc"))
     data_dir.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{data_dir / 'valuations.db'}"
@@ -156,7 +178,9 @@ class Store:
     @property
     def persistent(self) -> bool:
         """False when the database lives on a disk the host may wipe (e.g. Hugging Face Spaces)."""
-        if os.environ.get("DCF_EPHEMERAL") == "1":
+        if os.environ.get("DCF_EPHEMERAL") == "1" or CONFIG_ERRORS:
+            return False
+        if os.environ.get("RENDER") and self.url.startswith("sqlite"):
             return False
         return not (self.url.startswith("sqlite") and os.environ.get("SPACE_ID"))
 

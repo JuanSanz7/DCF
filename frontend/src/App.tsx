@@ -47,7 +47,8 @@ export default function App() {
       </header>
       {!st.persistent_storage && (
         <div className="border-b border-warn/30 bg-warn-soft px-4 py-2 text-center text-[12.5px] text-warn">
-          This server has no permanent database yet: saved valuations will be lost when it restarts. Set DCF_DATABASE_URL (see the README).
+          {st.config_errors?.length ? st.config_errors.join(' ') + ' Until then, ' : 'This server has no permanent database yet: '}
+          saved valuations and accounts will be lost when it restarts.
         </div>
       )}
       <main className="pt-4">
