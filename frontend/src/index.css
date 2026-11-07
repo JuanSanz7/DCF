@@ -23,6 +23,19 @@
   --color-bad: #b42318;
   --color-bad-soft: #fbe4e1;
   --color-good: #1d7a46;
+
+  /* Streamlit-era navy + cyan, kept for continuity with v1 */
+  --color-navy-950: #041d2b;
+  --color-navy-900: #06283a;
+  --color-navy-800: #0b344a;
+  --color-navy-700: #0f415c;
+  --color-navy-600: #175676;
+  --color-cyan: #12b3d6;
+  --color-cyan-600: #0fa3c4;
+  --color-on-navy: #eaf6ff;
+  --color-on-navy-2: rgba(234, 246, 255, 0.72);
+  --color-on-navy-3: rgba(234, 246, 255, 0.5);
+  --color-run: #16a34a;
 }
 
 @layer base {
@@ -55,4 +68,16 @@
   .hint { @apply text-[12px] leading-snug text-ink-3; }
   .section-title { @apply font-cond text-[15px] font-semibold text-ink; }
   .chip { @apply inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium; }
+
+  /* sidebar (navy) */
+  .side { background: linear-gradient(180deg, var(--color-navy-800) 0%, var(--color-navy-900) 100%); color: var(--color-on-navy); }
+  .side .label { color: var(--color-on-navy-2); }
+  .side .hint { color: var(--color-on-navy-3); }
+  .side-title { @apply mb-2 flex items-center justify-between font-cond text-[14px] font-semibold tracking-wide text-on-navy; }
+  .side .field { @apply h-7 border-transparent bg-white text-[12.5px] text-ink; }
+  .side-btn { @apply inline-flex h-7 items-center gap-1.5 rounded-md border border-white/20 bg-white/10 px-2.5 text-[12px] font-medium text-on-navy hover:bg-white/20; }
+  .side-seg { @apply inline-flex rounded-md bg-navy-950/60 p-0.5; }
+  .side-seg button { @apply h-6 rounded-[5px] px-2 text-[11.5px] font-medium text-on-navy-2 hover:text-on-navy; }
+  .side-seg button[aria-checked="true"] { @apply bg-cyan text-navy-950; }
+  .card { @apply rounded-lg border border-rule bg-panel; }
 }

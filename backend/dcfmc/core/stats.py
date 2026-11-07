@@ -46,6 +46,7 @@ def convergence(v: np.ndarray, checkpoints: int = 40) -> dict:
     if n < 50:
         return {"n": [], "mean": [], "median": [], "lo": [], "hi": []}
     ns = np.unique(np.geomspace(50, n, checkpoints).astype(int))
+    ns = ns[ns <= n]
     cs = np.cumsum(v)
     mean = cs[ns - 1] / ns
     med = [float(np.median(v[:k])) for k in ns]
@@ -181,13 +182,16 @@ def summarize(out: SimulationOutput, sample_points: int = 2500) -> dict:
         "year": list(range(1, fcff.shape[1] + 1)),
         **{f"p{p}": np.percentile(fcff, p, axis=0).tolist() for p in (5, 25, 50, 75, 95)},
         "base": out.base["table"]["fcff"],
+        "mean": fcff.mean(axis=0).tolist(),
+        "sd": fcff.std(axis=0).tolist(),
     }
     res["sensitivity"] = sensitivity(out, v, mask)
     res["tornado"] = tornado(out)
     # input summaries (what was actually simulated)
     res["inputs"] = {
         k: {"label": PARAMETERS[k].label, "unit": PARAMETERS[k].unit.value,
-            "mean": float(out.draws.values[k].mean()), **_pct(out.draws.values[k])}
+            "mean": float(out.draws.values[k].mean()), "sd": float(out.draws.values[k].std()),
+            **_pct(out.draws.values[k])}
         for k in out.draws.random_keys
     }
     # down-sampled joint sample for the explorer (scatter of value vs any driver)

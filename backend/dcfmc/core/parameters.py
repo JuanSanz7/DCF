@@ -151,8 +151,9 @@ PARAMETERS: dict[str, ParamSpec] = {p.key: p for p in [
        category="spread"),
     _P("debt_weight", "Debt weight D/(D+E)", "discount", Unit.PERCENT,
        "Debt share of capital at market values, used in the WACC.",
-       "Use market value of equity and (book or market) value of debt including leases.",
-       hard_min=0.0, hard_max=0.95, soft_min=0.0, soft_max=0.6, default=0.0,
+       "Use market value of equity and (book or market) value of debt including leases. "
+       "Left empty, it is computed as debt / (debt + price x shares).",
+       hard_min=0.0, hard_max=0.95, soft_min=0.0, soft_max=0.6, default=None,
        category="weight"),
     # -------------------------------------------------------------- terminal
     _P("terminal_growth", "Terminal growth", "terminal", Unit.PERCENT,

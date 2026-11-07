@@ -234,7 +234,11 @@ def to_inputs_payload(res: ImportResult, tab: str | None = None, with_distributi
             spec = PARAMETERS[key]
             rng = f[key].range if key in f else None
             if rng or spec.stochastic_by_default:
-                d = advisor.recommended_dist(key, p["value"], *(rng or (None, None)))
+                if rng:
+                    d = advisor.recommended_dist(key, p["value"], *rng)
+                else:  # a symmetric shape with an editable standard deviation, as in v1
+                    sug = advisor.suggest(key, p["value"])["suggestions"]
+                    d = next((x["dist"] for x in sug if x["dist"]["kind"] in ("truncnormal", "normal")), sug[0]["dist"])
                 p["dist"] = d
                 if rng:
                     p["note"] = f"Range from sheet note: {rng[0]:.4g} to {rng[1]:.4g}"

@@ -6,49 +6,54 @@ import { fmtNum, fmtPct, fmtUnit, isPct } from '../lib/format'
 
 const num = (v: number, d = 2) => fmtNum(v, d)
 
-/** The value field: distribution of intrinsic value with the market price cutting through it. */
+const sigmaLegend = [
+  { name: '±1σ', icon: 'rect', itemStyle: { color: 'rgba(22,163,74,0.35)' } },
+  { name: '±2σ', icon: 'rect', itemStyle: { color: 'rgba(234,170,0,0.4)' } },
+  { name: '±3σ', icon: 'rect', itemStyle: { color: 'rgba(220,38,38,0.3)' } },
+]
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sigmaBand = (name: string, color: string, data: [number, number][]): any =>
+  ({ type: 'line' as const, name, data: [], markArea: { silent: true, itemStyle: { color }, data: data.map(([a, b]) => [{ xAxis: a }, { xAxis: b }]) } })
+
+/** Distribution of intrinsic value with the ±1/2/3σ ranges, the mean and the market price. */
 export function ValueField({ s, currency, height = 340 }: { s: Summary; currency: string; height?: number }) {
   const option = useMemo<EChartsOption>(() => {
     const h = s.histogram!
     const price = s.price
-    const bars = h.counts.map((c, i) => {
-      const x0 = h.edges[i], x1 = h.edges[i + 1]
-      const mid = (x0 + x1) / 2
-      return { value: [x0, x1, c / h.total, mid], itemStyle: { color: mid >= price ? C.value : 'rgba(14,124,134,0.32)' } }
-    })
-    const p = s.percentiles!
-    const marks = [
-      { name: 'P10', x: p.p10 }, { name: 'Median', x: s.median }, { name: 'P90', x: p.p90 },
-    ].filter(m => m.x != null)
-    const ymax = Math.max(...h.counts) / h.total
+    const m = s.mean!, sd = s.sd!
+    const lo = h.edges[0], hi = h.edges[h.edges.length - 1]
+    const clip = (x: number) => Math.max(lo, Math.min(hi, x))
+    const bars = h.counts.map((c, i) => ({ value: [h.edges[i], h.edges[i + 1], c / h.total / (h.edges[i + 1] - h.edges[i])] }))
+    const ymax = Math.max(...bars.map(b => b.value[2]))
     return {
-      grid: { left: 8, right: 16, top: 34, bottom: 28, containLabel: true },
+      grid: { left: 8, right: 16, top: 34, bottom: 30, containLabel: true },
+      legend: { top: 0, right: 0, itemWidth: 14, itemHeight: 8, textStyle: { color: C.ink2, fontSize: 11 },
+        data: [...sigmaLegend, { name: 'Mean', itemStyle: { color: C.mean } }, { name: 'Current price', itemStyle: { color: C.market } }] },
       tooltip: { ...tooltipBase, trigger: 'item', formatter: (q: unknown) => {
-        const d = (q as { value?: number[]; seriesName?: string }).value
-        if (!d) return ''
-        return `${num(d[0])} – ${num(d[1])} ${currency}<br/><b>${fmtPct(d[2], 1)}</b> of paths`
+        const d = (q as { value?: number[] }).value
+        if (!d || d.length < 3) return ''
+        return `${num(d[0])} – ${num(d[1])} ${currency}<br/><b>${fmtPct(d[2] * (d[1] - d[0]), 1)}</b> of paths`
       } },
-      xAxis: { ...baseAxis, type: 'value', scale: true, name: `Intrinsic value per share (${currency})`, nameLocation: 'middle', nameGap: 26, splitLine: { show: false } },
-      yAxis: { ...baseAxis, type: 'value', max: ymax * 1.18, axisLabel: { ...baseAxis.axisLabel, formatter: (v: number) => fmtPct(v, 0) } },
+      xAxis: { ...baseAxis, type: 'value', min: lo, max: hi, name: `Intrinsic value per share (${currency})`, nameLocation: 'middle', nameGap: 26, splitLine: { show: false },
+        axisLabel: { ...baseAxis.axisLabel, showMinLabel: false, showMaxLabel: false, formatter: (v: number) => num(v, 0) } },
+      yAxis: { ...baseAxis, type: 'value', name: 'Density', max: ymax * 1.12, axisLabel: { ...baseAxis.axisLabel, formatter: (v: number) => v.toPrecision(2) } },
       series: [
+        sigmaBand('±3σ', C.s3, [[clip(m - 3 * sd), clip(m - 2 * sd)], [clip(m + 2 * sd), clip(m + 3 * sd)]]),
+        sigmaBand('±2σ', C.s2, [[clip(m - 2 * sd), clip(m - sd)], [clip(m + sd), clip(m + 2 * sd)]]),
+        sigmaBand('±1σ', C.s1, [[clip(m - sd), clip(m + sd)]]),
         {
-          type: 'custom', name: 'paths',
+          type: 'custom', name: 'paths', z: 3,
           renderItem: (_p, api) => {
             const a = api.coord([api.value(0), api.value(2)]), b = api.coord([api.value(1), 0])
-            return { type: 'rect', shape: { x: a[0] + 0.5, y: a[1], width: Math.max(b[0] - a[0] - 1, 1), height: b[1] - a[1] }, style: api.style() }
+            return { type: 'rect', shape: { x: a[0] + 0.5, y: a[1], width: Math.max(b[0] - a[0] - 1, 1), height: b[1] - a[1] },
+              style: { fill: C.bar, stroke: C.barEdge, lineWidth: 0.6 } }
           },
           encode: { x: [0, 1], y: 2 }, data: bars,
         },
-        {
-          type: 'line', data: [], markLine: {
-            symbol: 'none', silent: true,
-            data: [
-              { xAxis: price, lineStyle: { color: C.market, width: 2 }, label: { formatter: `Price ${num(price)}`, color: C.market, fontWeight: 600, position: 'end' } },
-              ...(s.base?.value_per_share != null ? [{ xAxis: s.base.value_per_share, lineStyle: { color: C.ink, width: 1.25, type: 'dashed' as const }, label: { formatter: `Base ${num(s.base.value_per_share)}`, color: C.ink, position: 'end' as const, fontSize: 11, distance: 16 } }] : []),
-              ...marks.map(m => ({ xAxis: m.x!, lineStyle: { color: C.ink3, width: 1, type: 'dotted' as const }, label: { formatter: m.name, color: C.ink3, fontSize: 10, position: 'end' as const } })),
-            ],
-          },
-        },
+        { type: 'line', name: 'Mean', data: [], itemStyle: { color: C.mean }, z: 4, markLine: { symbol: 'none', silent: true, data: [
+          { xAxis: m, lineStyle: { color: C.mean, width: 1.5, type: 'dashed' }, label: { show: false } }] } },
+        { type: 'line', name: 'Current price', data: [], itemStyle: { color: C.market }, z: 4, markLine: { symbol: 'none', silent: true, data: [
+          { xAxis: price, lineStyle: { color: C.market, width: 2, type: 'solid' }, label: { formatter: `${num(price)}`, color: C.market, fontWeight: 600, position: 'end' } }] } },
       ],
     }
   }, [s, currency])
@@ -79,29 +84,36 @@ export function CdfChart({ s, currency, height = 260 }: { s: Summary; currency: 
   return <EChart option={option} height={height} />
 }
 
-export function FanChart({ s, currency, height = 260 }: { s: Summary; currency: string; height?: number }) {
+export function FanChart({ s, currency, height = 300 }: { s: Summary; currency: string; height?: number }) {
   const option = useMemo<EChartsOption>(() => {
     const f = s.fan!
     const yrs = f.year.map(String)
-    const band = (lo: number[], hi: number[], name: string, color: string) => [
-      { type: 'line' as const, data: lo, stack: name, lineStyle: { opacity: 0 }, showSymbol: false, silent: true },
-      { type: 'line' as const, data: hi.map((h, i) => h - lo[i]), stack: name, lineStyle: { opacity: 0 }, showSymbol: false, areaStyle: { color }, itemStyle: { color }, silent: true, name },
-    ]
+    const mean = f.mean ?? f.p50, sd = f.sd ?? f.p50.map(() => 0)
+    const band = (k0: number, k1: number, name: string, color: string) => {
+      const lower = mean.map((m, i) => m - k1 * sd[i]), upper = mean.map((m, i) => m - k0 * sd[i])
+      const lower2 = mean.map((m, i) => m + k0 * sd[i]), upper2 = mean.map((m, i) => m + k1 * sd[i])
+      return [
+        { type: 'line' as const, data: lower, stack: name + 'a', lineStyle: { opacity: 0 }, showSymbol: false, silent: true },
+        { type: 'line' as const, name, data: upper.map((u, i) => u - lower[i]), stack: name + 'a', lineStyle: { opacity: 0 }, showSymbol: false, areaStyle: { color }, itemStyle: { color }, silent: true },
+        { type: 'line' as const, data: lower2, stack: name + 'b', lineStyle: { opacity: 0 }, showSymbol: false, silent: true },
+        { type: 'line' as const, data: upper2.map((u, i) => u - lower2[i]), stack: name + 'b', lineStyle: { opacity: 0 }, showSymbol: false, areaStyle: { color }, silent: true },
+      ]
+    }
     return {
-      grid: { left: 8, right: 16, top: 26, bottom: 24, containLabel: true },
-      legend: { top: 0, right: 0, textStyle: { color: C.ink2, fontSize: 11 }, itemWidth: 14, itemHeight: 8, data: [
-        { name: 'P5–P95', icon: 'rect', itemStyle: { color: 'rgba(14,124,134,0.18)' } }, { name: 'P25–P75', icon: 'rect', itemStyle: { color: 'rgba(14,124,134,0.35)' } },
-        { name: 'Median', itemStyle: { color: C.value } }, { name: 'Base case', itemStyle: { color: C.ink } }] },
+      grid: { left: 8, right: 16, top: 30, bottom: 26, containLabel: true },
+      legend: { top: 0, right: 0, textStyle: { color: C.ink2, fontSize: 11 }, itemWidth: 14, itemHeight: 8,
+        data: [...sigmaLegend, { name: 'Average FCFF', itemStyle: { color: C.value } }, { name: 'Base case', itemStyle: { color: C.ink } }] },
       tooltip: { ...tooltipBase, trigger: 'axis', formatter: (q: unknown) => {
         const i = (q as { dataIndex: number }[])[0].dataIndex
-        return `Year ${f.year[i]}<br/>Median ${num(f.p50[i], 0)}m · base ${num(f.base[i], 0)}m<br/>P5–P95 ${num(f.p5[i], 0)} – ${num(f.p95[i], 0)}m ${currency}`
+        return `Year ${f.year[i]}<br/>Average <b>${num(mean[i], 0)}m</b> ± ${num(sd[i], 0)}m (1σ)<br/>Base case ${num(f.base[i], 0)}m ${currency}`
       } },
       xAxis: { ...baseAxis, type: 'category', data: yrs, name: 'Year', nameLocation: 'middle', nameGap: 22, boundaryGap: false },
       yAxis: { ...baseAxis, type: 'value', name: `FCFF (m ${currency})`, axisLabel: { ...baseAxis.axisLabel, formatter: (v: number) => num(v, 0) } },
       series: [
-        ...band(f.p5, f.p95, 'P5–P95', 'rgba(14,124,134,0.12)'),
-        ...band(f.p25, f.p75, 'P25–P75', 'rgba(14,124,134,0.24)'),
-        { type: 'line', name: 'Median', data: f.p50, showSymbol: false, lineStyle: { color: C.value, width: 2 }, itemStyle: { color: C.value } },
+        ...band(2, 3, '±3σ', 'rgba(220,38,38,0.10)'),
+        ...band(1, 2, '±2σ', 'rgba(234,170,0,0.16)'),
+        ...band(0, 1, '±1σ', 'rgba(22,163,74,0.16)').slice(0, 2).map((x, i) => (i === 0 ? { ...x, data: mean.map((m, j) => m - sd[j]) } : { ...x, data: sd.map(v => 2 * v) })),
+        { type: 'line', name: 'Average FCFF', data: mean, symbol: 'circle', symbolSize: 6, lineStyle: { color: C.value, width: 2 }, itemStyle: { color: C.value } },
         { type: 'line', name: 'Base case', data: f.base, showSymbol: false, lineStyle: { color: C.ink, width: 1.25, type: 'dashed' }, itemStyle: { color: C.ink } },
       ],
     }
@@ -132,7 +144,7 @@ export function Tornado({ s, specs, currency, height }: { s: Summary; specs: Rec
         { type: 'bar', stack: 'a', silent: true, itemStyle: { color: 'transparent' }, data: t.map(r => Math.min(r.value_low ?? base, r.value_high ?? base)) },
         { type: 'bar', stack: 'a', barWidth: 14, data: t.map(r => ({
           value: Math.abs((r.value_high ?? base) - (r.value_low ?? base)),
-          itemStyle: { color: (r.value_high ?? 0) >= (r.value_low ?? 0) ? C.value : '#6b7a99', borderRadius: 2 },
+          itemStyle: { color: (r.value_high ?? 0) >= (r.value_low ?? 0) ? '#1f77b4' : '#6b7a99', borderRadius: 2 },
         })) },
         { type: 'line', data: [], markLine: { symbol: 'none', silent: true, data: [
           { xAxis: base, lineStyle: { color: C.ink, type: 'dashed' }, label: { formatter: 'Base', color: C.ink3, fontSize: 10, position: 'insideEndTop' } },

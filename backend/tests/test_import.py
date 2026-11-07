@@ -23,7 +23,7 @@ def test_excel_import_reproduces_sheet(googl_xlsx):
     inp.params.pop("non_operating_assets")
     assert base_case(inp)["value_per_share"] == pytest.approx(f["intrinsic_value"].value, rel=1e-9)
     assert inp.params["reinvestment_1"].dist.kind == "pert"        # from the note's range
-    assert inp.params["growth_1"].dist.kind == "lognormal"         # advisor default
+    assert inp.params["growth_1"].dist.kind == "truncnormal"       # symmetric with an editable sigma
     assert not [i for i in validate(inp) if i.severity == "error"]
 
 

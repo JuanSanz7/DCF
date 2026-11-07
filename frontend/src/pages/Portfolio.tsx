@@ -23,7 +23,7 @@ export default function Portfolio() {
 
   if (q.isLoading) return <div className="p-10"><Spinner /></div>
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 lg:px-6">
+    <div className="mx-auto max-w-6xl px-4 py-10 lg:px-6">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-[28px] font-semibold leading-tight">Valuation register</h1>

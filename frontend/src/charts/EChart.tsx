@@ -1,10 +1,19 @@
 import { useEffect, useRef } from 'react'
-import * as echarts from 'echarts'
+import * as echarts from 'echarts/core'
+import { BarChart, CustomChart, HeatmapChart, LineChart, ScatterChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent, VisualMapComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import type { ECElementEvent, EChartsOption } from 'echarts'
+
+echarts.use([BarChart, CustomChart, HeatmapChart, LineChart, ScatterChart, GridComponent, LegendComponent, MarkAreaComponent,
+  MarkLineComponent, TooltipComponent, VisualMapComponent, CanvasRenderer])
 
 export const C = {
   ink: '#14213d', ink2: '#44506a', ink3: '#7a8499', rule: '#dde1d8', grid: '#eceee8',
-  value: '#0e7c86', valueSoft: 'rgba(14,124,134,0.16)', valueMid: 'rgba(14,124,134,0.35)',
-  market: '#b4236a', marketSoft: 'rgba(180,35,106,0.12)', bad: '#b42318', warn: '#a85d00',
+  value: '#0e8fae', valueSoft: 'rgba(18,179,214,0.16)', valueMid: 'rgba(18,179,214,0.35)',
+  bar: '#7cc9dd', barEdge: '#3a9fbb',
+  market: '#7b2d8e', marketSoft: 'rgba(123,45,142,0.12)', mean: '#d1342f', bad: '#b42318', warn: '#a85d00',
+  s1: 'rgba(22,163,74,0.10)', s2: 'rgba(234,170,0,0.12)', s3: 'rgba(220,38,38,0.09)',
 }
 export const FONT = '"IBM Plex Sans", system-ui, sans-serif'
 
@@ -21,8 +30,8 @@ export const tooltipBase = {
 }
 
 export function EChart({ option, height = 300, className, onClick }: {
-  option: echarts.EChartsOption; height?: number | string; className?: string
-  onClick?: (p: echarts.ECElementEvent) => void
+  option: EChartsOption; height?: number | string; className?: string
+  onClick?: (p: ECElementEvent) => void
 }) {
   const el = useRef<HTMLDivElement>(null)
   const chart = useRef<echarts.ECharts | null>(null)

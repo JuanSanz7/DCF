@@ -22,6 +22,9 @@ class Issue:
         return asdict(self)
 
 
+DERIVED = {"debt_weight"}  # computed from other inputs when left empty
+
+
 def fmt(key: str, x: float | None) -> str:
     if x is None:
         return "n/a"
@@ -44,6 +47,8 @@ def validate(inp: ValuationInputs) -> list[Issue]:
         spec = PARAMETERS[key]
         b = inp.base(key)
         if b is None:
+            if key in DERIVED:
+                continue
             if spec.required or spec.default is None:
                 add("error", "missing", f"{spec.label}: a base value is required.", key)
             continue

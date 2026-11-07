@@ -116,6 +116,8 @@ def value_paths(inp: ValuationInputs, d: Draws, detail: bool = False) -> dict[st
         wacc = P["wacc"]
     else:
         dw = P["debt_weight"]
+        mcap = P["price"] * P["shares"]
+        dw = np.where(np.isnan(dw), np.divide(P["debt"], P["debt"] + mcap, out=np.zeros(n), where=(P["debt"] + mcap) > 0), dw)
         ke = rf + P["beta"] * erp_tot
         kd = rf + P["default_spread"]
         wacc = ke * (1 - dw) + kd * (1 - tax) * dw

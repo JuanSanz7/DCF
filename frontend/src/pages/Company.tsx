@@ -34,7 +34,7 @@ export default function Company() {
   const toggle = (id: string) => setPick(p => (p.includes(id) ? p.filter(x => x !== id) : [...p.slice(-1), id]))
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 lg:px-6">
+    <div className="mx-auto max-w-6xl px-4 py-10 lg:px-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-[13px] text-ink-3"><Link to="/" className="hover:text-ink">Register</Link> / {ticker}</p>

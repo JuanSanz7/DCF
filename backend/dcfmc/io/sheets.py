@@ -118,15 +118,32 @@ def _csv_tab(sid: str, gid: str | None, tab: str | None) -> ImportResult:
     return res
 
 
-def load_google_tab(url: str, tab: str | None) -> tuple[ImportResult, list[str]]:
-    """Reads one company tab. With a tab name the whole workbook is exported as .xlsx
-    (typed numbers + notes); with only a gid in the link the tab is read as CSV."""
+def load_google_tab(url: str, tab: str | None, with_notes: bool = False) -> tuple[ImportResult, list[str]]:
+    """Reads one company tab. Fast path (default): only that tab, as CSV of displayed values
+    (~1 s). With notes: the whole workbook is exported as .xlsx to also read the cell notes
+    (slow for large workbooks)."""
     sid = extract_sheet_id(url)
     gid = extract_gid(url)
     if not tab:
         if not gid:
-            raise SheetError("Choose the company tab (or paste a link that ends in #gid=...).")
+            raise SheetError("Type the name of the company's tab (or paste a link that ends in #gid=...).")
         return _csv_tab(sid, gid, None), []
+    if not with_notes:
+        try:
+            res = _csv_tab(sid, None, tab)
+        except SheetError:
+            raise
+        if len(res.fields) < 5:
+            raise SheetError(f"Tab '{tab}' not found, or it isn't built from the valuation template. "
+                             "Check the spelling (it must match the tab name exactly).")
+        res.messages = [m for m in res.messages if "Cell notes" not in m["message"]]
+        tk = res.fields.get("ticker")
+        if tk and isinstance(tk.value, str):
+            t = tk.value.split(":")[-1].strip().upper()
+            if t and t not in tab.upper() and tab.upper() not in t:
+                res.msg("warning", f"The tab's ticker is '{tk.value}', not '{tab}'. Google returns the first tab "
+                                   "when a name doesn't exist: check the tab name.")
+        return res, []
     try:
         wb = Workbook.from_bytes(fetch_workbook_bytes(sid))
         return wb.read_tab(tab, "sheet"), wb.tabs()

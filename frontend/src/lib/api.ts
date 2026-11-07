@@ -49,10 +49,10 @@ export interface Summary {
   ecdf?: { q: number[]; x: number[] }
   convergence?: { n: number[]; mean: number[]; median: number[]; lo: number[]; hi: number[] }
   tv_share?: Pcts; ev?: Pcts; wacc?: Pcts; wacc_terminal?: Pcts; growth_terminal?: Pcts
-  fan?: { year: number[]; p5: number[]; p25: number[]; p50: number[]; p75: number[]; p95: number[]; base: number[] }
+  fan?: { year: number[]; p5: number[]; p25: number[]; p50: number[]; p75: number[]; p95: number[]; base: number[]; mean?: number[]; sd?: number[] }
   sensitivity?: { key: string; label: string; rho: number | null; contribution: number }[]
   tornado?: { key: string; label: string; unit: Unit; input_low: number | null; input_high: number | null; value_low: number | null; value_high: number | null; base: number | null; swing: number }[]
-  inputs?: Record<string, { label: string; unit: Unit; mean: number } & Pcts>
+  inputs?: Record<string, { label: string; unit: Unit; mean: number; sd?: number } & Pcts>
   sample?: Record<string, number[]>
   heatmaps?: Heatmap[]
   elapsed_ms?: number
@@ -117,7 +117,7 @@ export const api = {
   logout: () => post<{ ok: boolean }>('/api/auth/logout', {}),
   importLegacy: (file: File) => { const f = new FormData(); f.append('file', file); return req<{ imported: number; skipped: number }>('/api/import/legacy', { method: 'POST', body: f }) },
   template: (ticker: string, currency: string) => req<Inputs>(`/api/template?ticker=${encodeURIComponent(ticker)}&currency=${currency}`),
-  validate: (inputs: Inputs) => post<{ issues: Issue[]; active: string[]; base: BaseCase | null }>('/api/validate', inputs),
+  validate: (inputs: Inputs) => post<{ issues: Issue[]; active: string[]; base: BaseCase | null; wacc: { mean: number; sd: number; p5: number; p50: number; p95: number } | null }>('/api/validate', inputs),
   simulate: (inputs: Inputs) => post<SimResponse>('/api/simulate', inputs),
   explore: (q: { x: string; y: string; run_token?: string; valuation_id?: string; bins?: number }) =>
     req<Heatmap>('/api/explore?' + new URLSearchParams(Object.entries(q).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))),
@@ -135,7 +135,7 @@ export const api = {
   settings: () => req<Record<string, unknown>>('/api/settings'),
   putSettings: (b: Record<string, unknown>) => req<Record<string, unknown>>('/api/settings', { method: 'PUT', body: JSON.stringify(b) }),
   sheetTabs: (url: string) => post<{ tabs: string[] }>('/api/import/sheet/tabs', { url }),
-  importSheet: (url: string, tab?: string) => post<ImportResponse>('/api/import/sheet', { url, tab }),
+  importSheet: (url: string, tab?: string, with_notes = false) => post<ImportResponse>('/api/import/sheet', { url, tab, with_notes }),
   importExcel: (file: File, tab?: string) => { const f = new FormData(); f.append('file', file); if (tab) f.append('tab', tab); return req<ImportResponse>('/api/import/excel', { method: 'POST', body: f }) },
   importYahoo: (symbol: string) => req<ImportResponse>(`/api/import/yahoo/${encodeURIComponent(symbol)}`),
   searchTickers: (q: string) => req<{ symbol: string; name: string; exchange: string; type: string }[]>(`/api/tickers/search?q=${encodeURIComponent(q)}`),

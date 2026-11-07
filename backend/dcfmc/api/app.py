@@ -59,6 +59,7 @@ class PatchReq(BaseModel):
 class SheetReq(BaseModel):
     url: str
     tab: str | None = None
+    with_notes: bool = False
 
 
 class Credentials(BaseModel):
@@ -207,7 +208,16 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
         inp = parse_inputs(payload)
         issues = [i.to_dict() for i in validate(inp)]
         ok = not any(i["severity"] == "error" for i in issues)
-        return {"issues": issues, "active": active_parameters(inp), "base": base_case(inp) if ok else None}
+        wacc = None
+        if ok and inp.model.discount_mode == "build_up":
+            probe = inp.model_copy(deep=True)
+            probe.simulation.n, probe.simulation.seed, probe.simulation.correlations = 4000, 1, []
+            w = simulate(probe).paths["wacc"]
+            q = np.percentile(w, [5, 16, 50, 84, 95])
+            wacc = {"mean": float(w.mean()), "sd": float(w.std()), "p5": float(q[0]), "p16": float(q[1]),
+                    "p50": float(q[2]), "p84": float(q[3]), "p95": float(q[4])}
+        return {"issues": issues, "active": active_parameters(inp), "base": base_case(inp) if ok else None,
+                "wacc": wacc}
 
     max_paths = int(os.environ.get("DCF_MAX_PATHS", "2000000"))
 
@@ -352,7 +362,7 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
     @app.post("/api/import/sheet")
     def import_sheet(req: SheetReq):
         try:
-            res, tabs = sheets.load_google_tab(req.url, req.tab)
+            res, tabs = sheets.load_google_tab(req.url, req.tab, with_notes=req.with_notes)
         except sheets.SheetError as e:
             raise HTTPException(400, str(e))
         return _import_response(res, req.tab, tabs)
