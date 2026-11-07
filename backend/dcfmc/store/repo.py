@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
+import zipfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,7 +37,7 @@ def valuation_row(v: Valuation) -> dict:
     }
 
 
-def save_run(store: Store, out: SimulationOutput, summary: dict, label: str = "", notes: str = "") -> str:
+def save_run(store: Store, user_id: int, out: SimulationOutput, summary: dict, label: str = "", notes: str = "") -> str:
     inp = out.inputs
     pct = summary.get("percentiles") or {}
     mask = out.valid
@@ -49,7 +51,7 @@ def save_run(store: Store, out: SimulationOutput, summary: dict, label: str = ""
         arrays["_" + k] = out.paths[k][idx]
     light = {k: v for k, v in summary.items() if k != "sample"}
     with store.Session.begin() as s:
-        c = store.upsert_company(s, inp.company.ticker, inp.company.name, inp.company.currency,
+        c = store.upsert_company(s, user_id, inp.company.ticker, inp.company.name, inp.company.currency,
                                  inp.company.yahoo_symbol)
         v = Valuation(
             company=c, label=label, notes=notes, source="app", engine_version=ENGINE_VERSION,
@@ -71,17 +73,23 @@ def _jsonable(x):
     return json.loads(json.dumps(x, default=lambda o: o.item() if hasattr(o, "item") else str(o)))
 
 
-def list_valuations(store: Store, ticker: str | None = None, limit: int = 500) -> list[dict]:
+def list_valuations(store: Store, user_id: int, ticker: str | None = None, limit: int = 500) -> list[dict]:
     with store.Session() as s:
-        q = select(Valuation).join(Company).order_by(Valuation.created_at.desc()).limit(limit)
+        q = (select(Valuation).join(Company).where(Company.user_id == user_id)
+             .order_by(Valuation.created_at.desc()).limit(limit))
         if ticker:
             q = q.where(Company.ticker == ticker.upper())
         return [valuation_row(v) for v in s.scalars(q)]
 
 
-def get_valuation(store: Store, vid: str, with_sample: bool = False) -> dict | None:
+def _owned(s, user_id: int, vid: str) -> Valuation | None:
+    v = s.get(Valuation, vid)
+    return v if v is not None and v.company.user_id == user_id else None
+
+
+def get_valuation(store: Store, user_id: int, vid: str, with_sample: bool = False) -> dict | None:
     with store.Session() as s:
-        v = s.get(Valuation, vid)
+        v = _owned(s, user_id, vid)
         if v is None:
             return None
         d = valuation_row(v)
@@ -92,20 +100,20 @@ def get_valuation(store: Store, vid: str, with_sample: bool = False) -> dict | N
         return d
 
 
-def update_valuation(store: Store, vid: str, **fields) -> dict | None:
+def update_valuation(store: Store, user_id: int, vid: str, **fields) -> dict | None:
     with store.Session.begin() as s:
-        v = s.get(Valuation, vid)
+        v = _owned(s, user_id, vid)
         if v is None:
             return None
         for k in ("label", "notes", "pinned"):
             if k in fields and fields[k] is not None:
                 setattr(v, k, fields[k])
-    return get_valuation(store, vid)
+    return get_valuation(store, user_id, vid)
 
 
-def delete_valuation(store: Store, vid: str) -> bool:
+def delete_valuation(store: Store, user_id: int, vid: str) -> bool:
     with store.Session.begin() as s:
-        v = s.get(Valuation, vid)
+        v = _owned(s, user_id, vid)
         if v is None:
             return False
         comp = v.company
@@ -116,11 +124,11 @@ def delete_valuation(store: Store, vid: str) -> bool:
         return True
 
 
-def companies(store: Store) -> list[dict]:
+def companies(store: Store, user_id: int) -> list[dict]:
     """Latest valuation per company plus the history of medians (for sparklines)."""
     with store.Session() as s:
         out = []
-        for c in s.scalars(select(Company).order_by(Company.ticker)):
+        for c in s.scalars(select(Company).where(Company.user_id == user_id).order_by(Company.ticker)):
             vals = list(c.valuations)
             if not vals:
                 continue
@@ -134,9 +142,9 @@ def companies(store: Store) -> list[dict]:
         return out
 
 
-def company(store: Store, ticker: str) -> dict | None:
+def company(store: Store, user_id: int, ticker: str) -> dict | None:
     with store.Session() as s:
-        c = s.scalar(select(Company).where(Company.ticker == ticker.upper()))
+        c = s.scalar(select(Company).where(Company.user_id == user_id, Company.ticker == ticker.upper()))
         if c is None:
             return None
         return {"ticker": c.ticker, "name": c.name, "currency": c.currency, "yahoo_symbol": c.yahoo_symbol,
@@ -196,7 +204,7 @@ def _pm(s) -> tuple[float | None, float | None]:
     return v, sd
 
 
-def import_legacy(store: Store, folder: str | Path) -> dict:
+def import_legacy(store: Store, user_id: int, folder: str | Path) -> dict:
     """Imports the v1 Streamlit 'saved_analyses' folder (or an extracted export ZIP).
     v1 kept only formatted strings, so inputs are rebuilt where possible and the
     run is marked 'legacy-import'."""
@@ -233,11 +241,12 @@ def import_legacy(store: Store, folder: str | Path) -> dict:
             if price is not None:
                 params["price"] = {"value": price, "source": "legacy v1"}
             with store.Session.begin() as s:
-                c = store.upsert_company(s, ticker, info.get("company_name", ticker), cur)
-                if s.scalar(select(Valuation).where(Valuation.id == aid)):
+                c = store.upsert_company(s, user_id, ticker, info.get("company_name", ticker), cur)
+                vid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"dcfmc-legacy/{user_id}/{aid}"))
+                if s.get(Valuation, vid) is not None:
                     skipped += 1
                     continue
-                v = Valuation(id=aid[:36], company=c, created_at=created, source="legacy-import",
+                v = Valuation(id=vid, company=c, created_at=created, source="legacy-import",
                               label="Imported from v1", engine_version="1.x", currency=cur,
                               inputs={"company": {"ticker": ticker, "name": info.get("company_name", ""),
                                                   "currency": cur}, "params": params, "_legacy": True},
@@ -249,3 +258,25 @@ def import_legacy(store: Store, folder: str | Path) -> dict:
                 s.add(ValuationResult(valuation_id=v.id, summary={"legacy": vs}, sample=None))
                 imported += 1
     return {"imported": imported, "skipped": skipped}
+
+
+def import_legacy_zip(store: Store, user_id: int, data: bytes) -> dict:
+    """Imports a v1 'Export ZIP' (or a zipped saved_analyses folder) uploaded from the browser."""
+    import io
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp).resolve()
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            total = 0
+            for info in zf.infolist():
+                target = (root / info.filename).resolve()
+                if root not in target.parents and target != root:
+                    raise ValueError("The ZIP contains unsafe paths.")
+                total += info.file_size
+                if total > 200 * 1024 * 1024:
+                    raise ValueError("The ZIP is too large when extracted.")
+            zf.extractall(root)
+        idx = next(root.rglob("analyses_index.json"), None)
+        if idx is None:
+            raise ValueError("No analyses_index.json found: this is not a v1 export.")
+        return import_legacy(store, user_id, idx.parent)

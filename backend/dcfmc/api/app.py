@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import zipfile
 import hmac
 import os
 import secrets
@@ -27,7 +28,7 @@ from ..core.stats import explore as explore_run
 from ..core.stats import heatmap, summarize
 from ..core.validation import validate
 from ..io import report, sheets, template, yahoo
-from ..store import repo
+from ..store import repo, users
 from ..store.db import Store
 
 DIST_TA = TypeAdapter(Distribution)
@@ -60,22 +61,29 @@ class SheetReq(BaseModel):
     tab: str | None = None
 
 
+class Credentials(BaseModel):
+    username: str
+    password: str
+    invite: str | None = None
+
+
 class RunCache:
     """Keeps the last few unsaved simulations in memory so they can be explored or saved."""
     def __init__(self, size: int = 8):
         self.size, self.items, self.lock = size, OrderedDict(), Lock()
 
-    def put(self, out, summary) -> str:
-        tok = secrets.token_urlsafe(12)
+    def put(self, out, summary, owner: int) -> str:
+        tok = secrets.token_urlsafe(16)
         with self.lock:
-            self.items[tok] = (out, summary)
+            self.items[tok] = (out, summary, owner)
             while len(self.items) > self.size:
                 self.items.popitem(last=False)
         return tok
 
-    def get(self, tok):
+    def get(self, tok, owner: int):
         with self.lock:
-            return self.items.get(tok)
+            hit = self.items.get(tok)
+        return hit[:2] if hit and hit[2] == owner else None
 
 
 def _err(e: ValidationError) -> HTTPException:
@@ -88,19 +96,29 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
     app.add_middleware(GZipMiddleware, minimum_size=2000)
     app.state.store = store or Store()
     cache = RunCache()
-    password = os.environ.get("DCF_APP_PASSWORD")
-    secret = os.environ.get("DCF_SECRET", secrets.token_hex(16))
-
-    def _token() -> str:
-        return hmac.new(secret.encode(), (password or "").encode(), hashlib.sha256).hexdigest()
+    st0 = app.state.store
+    secret = os.environ.get("DCF_SECRET") or st0.app_value("session_secret", lambda: secrets.token_hex(32))
+    invite = os.environ.get("DCF_INVITE_CODE") or None
+    signup_open = os.environ.get("DCF_SIGNUP", "open") != "closed"
+    secure_cookie = bool(os.environ.get("SPACE_ID") or os.environ.get("DCF_SECURE_COOKIES"))
+    public = {"/api/health", "/api/auth/status", "/api/auth/login", "/api/auth/signup", "/api/auth/logout"}
 
     @app.middleware("http")
     async def auth(request: Request, call_next):
         path = request.url.path
-        if password and path.startswith("/api/") and path not in ("/api/health", "/api/auth/login", "/api/auth/status"):
-            if not hmac.compare_digest(request.cookies.get("dcf_session", ""), _token()):
-                return JSONResponse({"detail": "Not signed in"}, status_code=401)
+        request.state.uid = users.read_token(secret, request.cookies.get("dcf_session"))
+        if path.startswith("/api/") and path not in public and not path.startswith("/api/docs") \
+                and path != "/api/openapi.json" and request.state.uid is None:
+            return JSONResponse({"detail": "Not signed in"}, status_code=401)
         return await call_next(request)
+
+    def uid(request: Request) -> int:
+        return request.state.uid
+
+    def _set_session(response: Response, user_id: int):
+        response.set_cookie("dcf_session", users.make_token(secret, user_id), httponly=True,
+                            samesite="none" if secure_cookie else "lax", secure=secure_cookie,
+                            max_age=60 * 60 * 24 * users.SESSION_DAYS)
 
     @app.get("/api/health")
     def health():
@@ -108,17 +126,36 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
 
     @app.get("/api/auth/status")
     def auth_status(request: Request):
-        ok = not password or hmac.compare_digest(request.cookies.get("dcf_session", ""), _token())
-        return {"required": bool(password), "signed_in": ok}
+        u = users.get_user(app.state.store, request.state.uid) if request.state.uid else None
+        return {"user": u, "signup_open": signup_open, "invite_required": bool(invite),
+                "persistent_storage": app.state.store.persistent}
+
+    @app.post("/api/auth/signup")
+    def signup(req: Credentials, response: Response):
+        if not signup_open:
+            raise HTTPException(403, "New accounts are closed on this server.")
+        if invite and not hmac.compare_digest((req.invite or "").strip(), invite):
+            raise HTTPException(403, "Wrong invitation code.")
+        try:
+            u = users.create_user(app.state.store, req.username, req.password)
+        except users.AuthError as e:
+            raise HTTPException(400, str(e))
+        _set_session(response, u["id"])
+        return {"user": u}
 
     @app.post("/api/auth/login")
-    def login(response: Response, payload: dict = Body(...)):
-        if not password:
-            return {"ok": True}
-        if not hmac.compare_digest(str(payload.get("password", "")), password):
-            time.sleep(0.5)
-            raise HTTPException(401, "Wrong password")
-        response.set_cookie("dcf_session", _token(), httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    def login(req: Credentials, response: Response):
+        try:
+            u = users.authenticate(app.state.store, req.username, req.password)
+        except users.AuthError as e:
+            time.sleep(0.4)
+            raise HTTPException(401, str(e))
+        _set_session(response, u["id"])
+        return {"user": u}
+
+    @app.post("/api/auth/logout")
+    def logout(response: Response):
+        response.delete_cookie("dcf_session")
         return {"ok": True}
 
     # ------------------------------------------------------------------ meta
@@ -142,8 +179,8 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
         return advisor.suggest(req.key, req.base, req.low, req.high, req.history, req.context)
 
     @app.get("/api/template")
-    def new_template(ticker: str = "NEW", currency: str = "USD"):
-        st = app.state.store.get_settings()
+    def new_template(request: Request, ticker: str = "NEW", currency: str = "USD"):
+        st = app.state.store.get_settings(uid(request))
         rf = (st.get("risk_free") or {}).get(currency.upper())
         params = {
             "risk_free": {"value": rf, "source": "settings"} if rf is not None else {"value": None},
@@ -173,7 +210,7 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
         return {"issues": issues, "active": active_parameters(inp), "base": base_case(inp) if ok else None}
 
     @app.post("/api/simulate")
-    def simulate_ep(payload: dict = Body(...)):
+    def simulate_ep(request: Request, payload: dict = Body(...)):
         inp = parse_inputs(payload)
         issues = [i.to_dict() for i in validate(inp)]
         if any(i["severity"] == "error" for i in issues):
@@ -182,14 +219,14 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
         out = simulate(inp)
         summary = summarize(out)
         summary["elapsed_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-        tok = cache.put(out, summary)
+        tok = cache.put(out, summary, uid(request))
         return {"run_token": tok, "issues": issues, "summary": summary, "active": active_parameters(inp)}
 
     @app.get("/api/explore")
-    def explore_ep(x: str, y: str, run_token: str | None = None, valuation_id: str | None = None,
+    def explore_ep(request: Request, x: str, y: str, run_token: str | None = None, valuation_id: str | None = None,
                    bins: int = Query(12, ge=4, le=30)):
         if run_token:
-            hit = cache.get(run_token)
+            hit = cache.get(run_token, uid(request))
             if not hit:
                 raise HTTPException(404, "This simulation is no longer in memory; run it again or open a saved one.")
             try:
@@ -197,7 +234,7 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
             except KeyError as e:
                 raise HTTPException(400, f"Unknown driver {e}")
         if valuation_id:
-            v = repo.get_valuation(app.state.store, valuation_id, with_sample=True)
+            v = repo.get_valuation(app.state.store, uid(request), valuation_id, with_sample=True)
             if not v:
                 raise HTTPException(404, "Valuation not found")
             smp = v["_sample"]
@@ -209,8 +246,8 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
 
     # ------------------------------------------------------------------ register
     @app.post("/api/valuations")
-    def save(req: SaveReq):
-        hit = cache.get(req.run_token) if req.run_token else None
+    def save(req: SaveReq, request: Request):
+        hit = cache.get(req.run_token, uid(request)) if req.run_token else None
         if hit is None:
             if not req.inputs:
                 raise HTTPException(400, "The simulation expired; send the inputs to run it again.")
@@ -219,16 +256,16 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
                 raise HTTPException(422, "Inputs have errors")
             out = simulate(inp)
             hit = (out, summarize(out))
-        vid = repo.save_run(app.state.store, hit[0], hit[1], req.label, req.notes)
-        return repo.get_valuation(app.state.store, vid)
+        vid = repo.save_run(app.state.store, uid(request), hit[0], hit[1], req.label, req.notes)
+        return repo.get_valuation(app.state.store, uid(request), vid)
 
     @app.get("/api/valuations")
-    def list_vals(ticker: str | None = None):
-        return repo.list_valuations(app.state.store, ticker)
+    def list_vals(request: Request, ticker: str | None = None):
+        return repo.list_valuations(app.state.store, uid(request), ticker)
 
     @app.get("/api/valuations/{vid}")
-    def get_val(vid: str):
-        v = repo.get_valuation(app.state.store, vid, with_sample=True)
+    def get_val(vid: str, request: Request):
+        v = repo.get_valuation(app.state.store, uid(request), vid, with_sample=True)
         if not v:
             raise HTTPException(404, "Valuation not found")
         smp = v.pop("_sample", {})
@@ -239,8 +276,8 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
         return v
 
     @app.get("/api/valuations/{vid}/export.xlsx")
-    def export_val(vid: str):
-        v = repo.get_valuation(app.state.store, vid)
+    def export_val(vid: str, request: Request):
+        v = repo.get_valuation(app.state.store, uid(request), vid)
         if not v:
             raise HTTPException(404, "Valuation not found")
         name = f"{v['ticker']}_valuation_{v['created_at'][:10]}.xlsx"
@@ -248,25 +285,25 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.patch("/api/valuations/{vid}")
-    def patch_val(vid: str, req: PatchReq):
-        v = repo.update_valuation(app.state.store, vid, **req.model_dump())
+    def patch_val(vid: str, req: PatchReq, request: Request):
+        v = repo.update_valuation(app.state.store, uid(request), vid, **req.model_dump())
         if not v:
             raise HTTPException(404, "Valuation not found")
         return v
 
     @app.delete("/api/valuations/{vid}")
-    def delete_val(vid: str):
-        if not repo.delete_valuation(app.state.store, vid):
+    def delete_val(vid: str, request: Request):
+        if not repo.delete_valuation(app.state.store, uid(request), vid):
             raise HTTPException(404, "Valuation not found")
         return {"ok": True}
 
     @app.get("/api/companies")
-    def list_companies():
-        return repo.companies(app.state.store)
+    def list_companies(request: Request):
+        return repo.companies(app.state.store, uid(request))
 
     @app.get("/api/companies/{ticker}")
-    def get_company(ticker: str):
-        c = repo.company(app.state.store, ticker)
+    def get_company(ticker: str, request: Request):
+        c = repo.company(app.state.store, uid(request), ticker)
         if not c:
             raise HTTPException(404, "Company not found")
         return c
@@ -278,12 +315,23 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
         return {"symbol": symbol, "dates": [d for d, _ in rows], "close": [c for _, c in rows]}
 
     @app.get("/api/settings")
-    def get_settings():
-        return app.state.store.get_settings()
+    def get_settings(request: Request):
+        return app.state.store.get_settings(uid(request))
 
     @app.put("/api/settings")
-    def put_settings(values: dict = Body(...)):
-        return app.state.store.put_settings(values)
+    def put_settings(request: Request, values: dict = Body(...)):
+        allowed = {"risk_free", "erp_mature", "simulation_paths", "marginal_tax"}
+        return app.state.store.put_settings({k: v for k, v in values.items() if k in allowed}, uid(request))
+
+    @app.post("/api/import/legacy")
+    async def import_legacy_ep(request: Request, file: UploadFile = File(...)):
+        data = await file.read()
+        if len(data) > 100 * 1024 * 1024:
+            raise HTTPException(413, "File too large (100 MB max)")
+        try:
+            return repo.import_legacy_zip(app.state.store, uid(request), data)
+        except (ValueError, zipfile.BadZipFile) as e:
+            raise HTTPException(400, str(e))
 
     # ------------------------------------------------------------------ importers
     @app.post("/api/import/sheet/tabs")

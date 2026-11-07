@@ -4,30 +4,31 @@ A personal intrinsic-valuation workbench. You set the inputs of a Damodaran-styl
 
 Everything is open source and free: Python (FastAPI, NumPy, SciPy, SQLAlchemy), React with Vite, Tailwind and Apache ECharts, and SQLite. There are no paid services or subscriptions.
 
-## Quick start
+## Using it
 
-**Local (recommended).** You need Python 3.10+ and Node 18+.
+Open the app's link in any browser, create an account, and start valuing. Each account has its own private register, so you can share the link with friends: they create their own accounts and see only their own valuations.
 
-```bash
-./run.sh          # macOS / Linux
-run.bat           # Windows
-```
+### Putting it online (once, from the browser, free)
 
-This builds the UI once, installs the backend and opens http://127.0.0.1:8000. The register is stored in `~/.dcfmc/valuations.db` (change it with `DCF_DATA_DIR`).
+The app runs on a free [Hugging Face Space](https://huggingface.co/spaces), and the register lives in a free [Neon](https://neon.tech) Postgres database so it survives restarts. GitHub deploys every push automatically.
 
-**Docker.**
+1. **Database.** Sign up at neon.tech (you can sign in with GitHub, no card needed) and create a project. Copy the connection string it shows (`postgresql://…`).
+2. **Hugging Face token.** Sign up at huggingface.co. Under Settings → Access Tokens, create a token with **Write** permission and copy it.
+3. **GitHub secrets.** In this repository, open Settings → Secrets and variables → Actions → New repository secret, and add:
+   * `HF_TOKEN`: the Hugging Face token.
+   * `DCF_DATABASE_URL`: the Neon connection string.
+   * `DCF_INVITE_CODE` (optional): a code people must type to create an account, if you don't want the link open to anyone.
+4. **Deploy.** Open Actions → "Deploy to Hugging Face" → Run workflow (later pushes deploy by themselves). The run's summary shows the app's link, `https://<your-hf-user>-value-field.hf.space`. The first build takes about 5 minutes.
 
-```bash
-docker compose up --build    # register kept in ./data
-```
+Free Spaces go to sleep after about two days without visitors and wake up on the next visit, which takes around a minute. Your data is safe in Neon either way.
 
-**Migrating from v1 (Streamlit).** Old runs saved in `saved_analyses/`, or unzipped from v1's "Export ZIP", can be imported with:
+### Running it on your own computer (optional)
 
-```bash
-python -m dcfmc import-legacy path/to/saved_analyses
-```
+With Python 3.10+ and Node 18+: `./run.sh` (macOS/Linux) or `run.bat` (Windows), or `docker compose up --build`. It opens http://127.0.0.1:8000.
 
-v1 kept only rounded strings, so these runs appear in the history with their results but can't be reopened in the workspace.
+### Bringing in v1 valuations
+
+In the old Streamlit app, download the ZIP from "Export / Import Analyses", then upload it in House assumptions → "Bring in valuations from the first version". v1 kept only rounded results, so these runs appear in each company's history but can't be reopened in the workspace.
 
 ## How to use it
 
@@ -78,24 +79,20 @@ The available shapes are fixed, normal, truncated normal, shifted lognormal (flo
 
 The advisor follows Damodaran's simulation workflow: start from an expected-value base case; simulate only the few drivers that matter; choose shapes from history, then cross-sectional data, then a reasoned distribution; ask whether each input is discrete or continuous, symmetric or skewed, thin- or fat-tailed; model the correlations you know; and don't double-count risk. Sources are linked in the app ([Investment Valuation ch. 33](https://pages.stern.nyu.edu/~adamodar/pdfiles/val3ed/c33.pdf), [DCF Myth 3.2](https://aswathdamodaran.blogspot.com/2016/05/dcf-myth-32-if-you-don-look-its-not.html)).
 
-## Hosting it for free
-
-* **Your own computer:** `./run.sh`. The simplest option, and your data stays local.
-* **Always on, free:** any small VM with Docker (for example Oracle Cloud's Always Free tier) running `docker compose up -d`, with `DCF_APP_PASSWORD` set and HTTPS in front (for example Caddy).
-* **Free PaaS** (Render, Koyeb, Hugging Face Spaces with Docker): these usually wipe the disk on restart, so point `DCF_DATABASE_URL` at a free Postgres (for example Neon or Supabase free tier) and `pip install psycopg[binary]`.
+## Configuration
 
 | Variable | Meaning |
 | --- | --- |
-| `DCF_DATA_DIR` | Folder for the SQLite register (default `~/.dcfmc`) |
-| `DCF_DATABASE_URL` | Any SQLAlchemy URL; overrides the SQLite file |
-| `DCF_APP_PASSWORD` | Require a password (recommended when exposed to the internet) |
-| `DCF_SECRET` | Signs the session cookie; set it to keep sessions across restarts |
-| `DCF_STATIC_DIR` | Location of the built UI (set by the run scripts and Docker) |
+| `DCF_DATABASE_URL` | Postgres connection string (Neon, Supabase…) or any SQLAlchemy URL. Without it a SQLite file is used, which free hosts wipe on restart (the app shows a warning). |
+| `DCF_INVITE_CODE` | If set, new accounts need this code |
+| `DCF_SIGNUP` | `closed` stops new sign-ups entirely |
+| `DCF_DATA_DIR` | Folder for the SQLite file when no database URL is set (default `~/.dcfmc`) |
+| `DCF_SECRET` | Signs session cookies; generated and stored in the database if not set |
 
 ## Development
 
 ```bash
-cd backend && pip install -e .[dev] && pytest -q      # 80+ tests: engine, parser, importers, API, register
+cd backend && pip install -e .[dev] && pytest -q      # 86 tests: engine, parser, importers, API, accounts, register
 python -m dcfmc serve                                  # API on :8000, docs at /api/docs
 cd frontend && npm install && npm run dev              # UI on :5173, proxied to the API
 ```
@@ -103,8 +100,9 @@ cd frontend && npm install && npm run dev              # UI on :5173, proxied to
 ```
 backend/dcfmc/core    parameters, distributions, advisor, inputs, engine, stats, validation
 backend/dcfmc/io      number parser, template reader, Google Sheets / Excel, Yahoo Finance, Excel report
-backend/dcfmc/store   SQLite register (SQLAlchemy), legacy importer
+backend/dcfmc/store   register (SQLAlchemy: SQLite or Postgres), user accounts, legacy importer
 backend/dcfmc/api     FastAPI app (JSON API + static UI)
 frontend/src          React app: register, company history, workspace, settings
+deploy/               Hugging Face deployment script (run by .github/workflows/deploy.yml)
 legacy/               v1 Streamlit / Tkinter code, kept for reference
 ```

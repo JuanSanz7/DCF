@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text,
-                        create_engine, event, select)
+                        UniqueConstraint, create_engine, event, select)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
@@ -28,10 +28,20 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "app_user"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Company(Base):
     __tablename__ = "company"
+    __table_args__ = (UniqueConstraint("user_id", "ticker", name="uq_company_user_ticker"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ticker: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"), index=True)
+    ticker: Mapped[str] = mapped_column(String(32), index=True)
     name: Mapped[str] = mapped_column(String(200), default="")
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     yahoo_symbol: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -90,7 +100,9 @@ class PriceCache(Base):
 
 
 class Setting(Base):
+    """Per-user preferences (user_id > 0) and app-level values (user_id = 0)."""
     __tablename__ = "setting"
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True, default=0)
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON)
 
@@ -104,10 +116,20 @@ DEFAULT_SETTINGS = {
 }
 
 
+def normalize_url(url: str) -> str:
+    """Accepts the URL as hosted Postgres providers show it (postgres://, postgresql://)."""
+    url = url.strip()
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
+
+
 def default_db_url() -> str:
-    url = os.environ.get("DCF_DATABASE_URL")
+    url = os.environ.get("DCF_DATABASE_URL") or os.environ.get("DATABASE_URL")
     if url:
-        return url
+        return normalize_url(url)
     data_dir = Path(os.environ.get("DCF_DATA_DIR", Path.home() / ".dcfmc"))
     data_dir.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{data_dir / 'valuations.db'}"
@@ -115,8 +137,8 @@ def default_db_url() -> str:
 
 class Store:
     def __init__(self, url: str | None = None):
-        self.url = url or default_db_url()
-        kw = {"connect_args": {"check_same_thread": False}} if self.url.startswith("sqlite") else {}
+        self.url = normalize_url(url) if url else default_db_url()
+        kw = {"connect_args": {"check_same_thread": False}} if self.url.startswith("sqlite") else {"pool_pre_ping": True, "pool_recycle": 280}
         self.engine = create_engine(self.url, future=True, **kw)
         if self.url.startswith("sqlite"):
             @event.listens_for(self.engine, "connect")
@@ -128,30 +150,46 @@ class Store:
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(self.engine, expire_on_commit=False, future=True)
 
+    @property
+    def persistent(self) -> bool:
+        """False when the database lives on a disk the host may wipe (e.g. Hugging Face Spaces)."""
+        if os.environ.get("DCF_EPHEMERAL") == "1":
+            return False
+        return not (self.url.startswith("sqlite") and os.environ.get("SPACE_ID"))
+
     # ---------------------------------------------------------------- settings
-    def get_settings(self) -> dict:
+    def get_settings(self, user_id: int = 0) -> dict:
         with self.Session() as s:
             out = json.loads(json.dumps(DEFAULT_SETTINGS))
-            for row in s.scalars(select(Setting)):
+            for row in s.scalars(select(Setting).where(Setting.user_id == user_id)):
                 out[row.key] = row.value
             return out
 
-    def put_settings(self, values: dict) -> dict:
+    def put_settings(self, values: dict, user_id: int = 0) -> dict:
         with self.Session.begin() as s:
             for k, v in values.items():
-                row = s.get(Setting, k)
+                row = s.get(Setting, (user_id, k))
                 if row:
                     row.value = v
                 else:
-                    s.add(Setting(key=k, value=v))
-        return self.get_settings()
+                    s.add(Setting(user_id=user_id, key=k, value=v))
+        return self.get_settings(user_id)
+
+    def app_value(self, key: str, factory) -> str:
+        """An app-level value created once and kept in the database (e.g. the session secret)."""
+        with self.Session.begin() as s:
+            row = s.get(Setting, (0, "_" + key))
+            if row is None:
+                row = Setting(user_id=0, key="_" + key, value={"v": factory()})
+                s.add(row)
+            return row.value["v"]
 
     # ---------------------------------------------------------------- companies
-    def upsert_company(self, s: Session, ticker: str, name: str = "", currency: str = "USD",
+    def upsert_company(self, s: Session, user_id: int, ticker: str, name: str = "", currency: str = "USD",
                        yahoo_symbol: str | None = None) -> Company:
-        c = s.scalar(select(Company).where(Company.ticker == ticker.upper()))
+        c = s.scalar(select(Company).where(Company.user_id == user_id, Company.ticker == ticker.upper()))
         if c is None:
-            c = Company(ticker=ticker.upper(), name=name or ticker.upper(), currency=currency,
+            c = Company(user_id=user_id, ticker=ticker.upper(), name=name or ticker.upper(), currency=currency,
                         yahoo_symbol=yahoo_symbol)
             s.add(c)
             s.flush()

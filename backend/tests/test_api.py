@@ -9,10 +9,20 @@ from dcfmc.store.db import Store
 from test_engine import mk
 
 
+def signed_in(app, name="juan"):
+    c = TestClient(app)
+    assert c.post("/api/auth/signup", json={"username": name, "password": "correct horse"}).status_code == 200
+    return c
+
+
 @pytest.fixture
-def client(tmp_path):
-    app = create_app(Store(f"sqlite:///{tmp_path / 't.db'}"), static_dir=tmp_path / "none")
-    return TestClient(app)
+def app(tmp_path):
+    return create_app(Store(f"sqlite:///{tmp_path / 't.db'}"), static_dir=tmp_path / "none")
+
+
+@pytest.fixture
+def client(app):
+    return signed_in(app)
 
 
 def payload(**kw):
@@ -81,13 +91,57 @@ def test_suggest_and_preview(client):
     assert p["p5"] < 0.18 < p["p95"]
 
 
-def test_password(tmp_path, monkeypatch):
-    monkeypatch.setenv("DCF_APP_PASSWORD", "s3cret")
-    c = TestClient(create_app(Store(f"sqlite:///{tmp_path / 'p.db'}"), static_dir=tmp_path / "none"))
-    assert c.get("/api/meta").status_code == 401
-    assert c.post("/api/auth/login", json={"password": "nope"}).status_code == 401
-    assert c.post("/api/auth/login", json={"password": "s3cret"}).status_code == 200
-    assert c.get("/api/meta").status_code == 200
+def test_auth_required_and_isolation(app):
+    anon = TestClient(app)
+    assert anon.get("/api/meta").status_code == 401
+    assert anon.get("/api/health").status_code == 200
+    assert anon.get("/api/auth/status").json()["user"] is None
+    a = signed_in(app, "juan")
+    b = signed_in(app, "friend")
+    assert a.post("/api/auth/signup", json={"username": "juan", "password": "another pass"}).status_code == 400
+    r = a.post("/api/simulate", json=payload()).json()
+    saved = a.post("/api/valuations", json={"run_token": r["run_token"]}).json()
+    # the friend can't see, open, explore, export or delete Juan's run
+    assert b.get("/api/companies").json() == []
+    assert b.get(f"/api/valuations/{saved['id']}").status_code == 404
+    assert b.get(f"/api/valuations/{saved['id']}/export.xlsx").status_code == 404
+    assert b.delete(f"/api/valuations/{saved['id']}").status_code == 404
+    assert b.post("/api/valuations", json={"run_token": r["run_token"]}).status_code == 400
+    assert b.get("/api/explore", params={"x": "growth_1", "y": "beta", "run_token": r["run_token"]}).status_code == 404
+    # settings are per user
+    a.put("/api/settings", json={"erp_mature": 0.05})
+    assert b.get("/api/settings").json()["erp_mature"] == 0.0482
+    assert a.get("/api/settings").json()["erp_mature"] == 0.05
+    # logout / login
+    a.post("/api/auth/logout")
+    a.cookies.clear()
+    assert a.get("/api/companies").status_code == 401
+    assert a.post("/api/auth/login", json={"username": "JUAN", "password": "wrong"}).status_code == 401
+    assert a.post("/api/auth/login", json={"username": "JUAN", "password": "correct horse"}).status_code == 200
+    assert len(a.get("/api/companies").json()) == 1
+
+
+def test_invite_code(tmp_path, monkeypatch):
+    monkeypatch.setenv("DCF_INVITE_CODE", "amigos")
+    app = create_app(Store(f"sqlite:///{tmp_path / 'i.db'}"), static_dir=tmp_path / "none")
+    c = TestClient(app)
+    assert c.get("/api/auth/status").json()["invite_required"] is True
+    assert c.post("/api/auth/signup", json={"username": "x_user", "password": "12345678", "invite": "no"}).status_code == 403
+    assert c.post("/api/auth/signup", json={"username": "x_user", "password": "12345678", "invite": "amigos"}).status_code == 200
+
+
+def test_session_survives_restart(tmp_path):
+    url = f"sqlite:///{tmp_path / 's.db'}"
+    c = signed_in(create_app(Store(url), static_dir=tmp_path / "none"))
+    cookie = c.cookies.get("dcf_session")
+    c2 = TestClient(create_app(Store(url), static_dir=tmp_path / "none"))
+    c2.cookies.set("dcf_session", cookie)
+    assert c2.get("/api/auth/status").json()["user"]["username"] == "juan"
+
+
+def test_postgres_url_normalised():
+    from dcfmc.store.db import normalize_url
+    assert normalize_url("postgres://u:p@h/db?sslmode=require") == "postgresql+psycopg://u:p@h/db?sslmode=require"
 
 
 def test_legacy_import(tmp_path):
@@ -101,7 +155,24 @@ def test_legacy_import(tmp_path):
         "prob_undervalued": "80.1%", "VaR 95%": "150.2 USD", "Std. Deviation": "27.94 USD",
         "Variable Parameters": {"Growth 5y": "15.0% (±2.0%)", "WACC": "9.6% (±0.5%)"}}))
     st = Store(f"sqlite:///{tmp_path / 'l.db'}")
-    assert import_legacy(st, folder) == {"imported": 1, "skipped": 0}
-    row = list_valuations(st)[0]
+    from dcfmc.store.users import create_user
+    uid = create_user(st, "juan", "12345678")["id"]
+    assert import_legacy(st, uid, folder) == {"imported": 1, "skipped": 0}
+    assert import_legacy(st, uid, folder) == {"imported": 0, "skipped": 1}
+    row = list_valuations(st, uid)[0]
     assert row["median"] == pytest.approx(186.64) and row["prob_above_price"] == pytest.approx(0.801)
     assert row["created_at"].startswith("2025-01-02")
+
+
+def test_legacy_zip_upload(client, tmp_path):
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("analyses_index.json", json.dumps({"JD": {"JD_20250102_101010": {"company_name": "JD.com", "timestamp": "20250102_101010"}}}))
+        z.writestr("JD_20250102_101010/valuation_summary.json", json.dumps({"current_price": "33.55 USD", "median_value": "40.0 USD"}))
+    r = client.post("/api/import/legacy", files={"file": ("export.zip", buf.getvalue())})
+    assert r.json() == {"imported": 1, "skipped": 0}
+    bad = io.BytesIO()
+    with zipfile.ZipFile(bad, "w") as z:
+        z.writestr("../evil.json", "{}")
+    assert client.post("/api/import/legacy", files={"file": ("x.zip", bad.getvalue())}).status_code == 400

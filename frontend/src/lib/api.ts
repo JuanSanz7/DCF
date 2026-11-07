@@ -80,6 +80,9 @@ export interface ImportResponse {
 }
 export interface Suggestion { dist: Dist; title: string; rationale: string; recommended: boolean }
 
+export interface User { id: number; username: string }
+export interface AuthStatus { user: User | null; signup_open: boolean; invite_required: boolean; persistent_storage: boolean }
+
 export class ApiError extends Error {
   status: number; detail: unknown
   constructor(status: number, detail: unknown) {
@@ -99,7 +102,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   if (!r.ok) {
     let detail: unknown = r.statusText
     try { detail = (await r.json()).detail } catch { /* not json */ }
-    if (r.status === 401 && path !== '/api/auth/login') window.dispatchEvent(new Event('dcf:unauthorized'))
+    if (r.status === 401 && !path.startsWith('/api/auth/')) window.dispatchEvent(new Event('dcf:unauthorized'))
     throw new ApiError(r.status, detail)
   }
   return r.json() as Promise<T>
@@ -108,8 +111,11 @@ const post = <T,>(p: string, body: unknown) => req<T>(p, { method: 'POST', body:
 
 export const api = {
   meta: () => req<Meta>('/api/meta'),
-  authStatus: () => req<{ required: boolean; signed_in: boolean }>('/api/auth/status'),
-  login: (password: string) => post<{ ok: boolean }>('/api/auth/login', { password }),
+  authStatus: () => req<AuthStatus>('/api/auth/status'),
+  login: (username: string, password: string) => post<{ user: User }>('/api/auth/login', { username, password }),
+  signup: (username: string, password: string, invite?: string) => post<{ user: User }>('/api/auth/signup', { username, password, invite }),
+  logout: () => post<{ ok: boolean }>('/api/auth/logout', {}),
+  importLegacy: (file: File) => { const f = new FormData(); f.append('file', file); return req<{ imported: number; skipped: number }>('/api/import/legacy', { method: 'POST', body: f }) },
   template: (ticker: string, currency: string) => req<Inputs>(`/api/template?ticker=${encodeURIComponent(ticker)}&currency=${currency}`),
   validate: (inputs: Inputs) => post<{ issues: Issue[]; active: string[]; base: BaseCase | null }>('/api/validate', inputs),
   simulate: (inputs: Inputs) => post<SimResponse>('/api/simulate', inputs),

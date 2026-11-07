@@ -1,10 +1,10 @@
 services:
   app:
     build: .
-    ports: ["8000:8000"]
-    volumes: ["./data:/data"]           # the SQLite register lives here
+    ports: ["8000:7860"]
+    volumes: ["./data:/data"]             # the SQLite register lives here
     environment:
-      # DCF_APP_PASSWORD: "choose-one"   # uncomment to require a password
-      # DCF_SECRET: "long-random-string" # keeps sessions valid across restarts
       DCF_DATA_DIR: /data
+      # DCF_DATABASE_URL: "postgresql://..."   # use a hosted Postgres instead of the local file
+      # DCF_INVITE_CODE: "choose-one"          # only people with this code can create accounts
     restart: unless-stopped

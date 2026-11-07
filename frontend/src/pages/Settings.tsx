@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Save, Trash2 } from 'lucide-react'
+import { Plus, Save, Trash2, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NumberField, Spinner } from '../components/ui'
 import { api } from '../lib/api'
@@ -41,6 +41,24 @@ export default function Settings() {
       </section>
       <button className="btn-primary mt-6" onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? <Spinner /> : <Save size={14} />} Save defaults</button>
       {save.isSuccess && <span className="ml-3 text-[13px] text-good">Defaults saved.</span>}
+      <LegacyImport />
     </div>
+  )
+}
+
+function LegacyImport() {
+  const qc = useQueryClient()
+  const m = useMutation({ mutationFn: (f: File) => api.importLegacy(f), onSuccess: () => qc.invalidateQueries({ queryKey: ['companies'] }) })
+  return (
+    <section className="mt-10">
+      <h2 className="section-title border-b border-rule pb-1.5">Bring in valuations from the first version</h2>
+      <p className="hint mt-2">In the old Streamlit app, open "Export / Import Analyses" and download the ZIP, then upload it here. The runs appear in each company's history with their results; v1 didn't keep the full inputs, so they can't be reopened in the workspace.</p>
+      <label className="btn mt-3 cursor-pointer"><Upload size={14} /> Upload v1 export (.zip)
+        <input type="file" accept=".zip" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) m.mutate(f) }} />
+      </label>
+      {m.isPending && <Spinner className="ml-3" />}
+      {m.data && <span className="ml-3 text-[13px] text-good">Imported {m.data.imported} valuation{m.data.imported === 1 ? '' : 's'}{m.data.skipped ? `, skipped ${m.data.skipped} already present` : ''}.</span>}
+      {m.error && <span className="ml-3 text-[13px] text-bad">{(m.error as Error).message}</span>}
+    </section>
   )
 }
