@@ -138,7 +138,10 @@ def default_db_url() -> str:
 class Store:
     def __init__(self, url: str | None = None):
         self.url = normalize_url(url) if url else default_db_url()
-        kw = {"connect_args": {"check_same_thread": False}} if self.url.startswith("sqlite") else {"pool_pre_ping": True, "pool_recycle": 280}
+        kw = {"connect_args": {"check_same_thread": False}} if self.url.startswith("sqlite") else {
+            "pool_pre_ping": True, "pool_recycle": 280,
+            # works behind PgBouncer-style poolers (e.g. Neon's "-pooler" host): no server-side prepares
+            "connect_args": {"prepare_threshold": None}}
         self.engine = create_engine(self.url, future=True, **kw)
         if self.url.startswith("sqlite"):
             @event.listens_for(self.engine, "connect")

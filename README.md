@@ -10,17 +10,13 @@ Open the app's link in any browser, create an account, and start valuing. Each a
 
 ### Putting it online (once, from the browser, free)
 
-The app runs on a free [Hugging Face Space](https://huggingface.co/spaces), and the register lives in a free [Neon](https://neon.tech) Postgres database so it survives restarts. GitHub deploys every push automatically.
+The app runs as a free [Render](https://render.com) web service built from this repository, and the register lives in a free [Neon](https://neon.tech) Postgres database, so it survives restarts. Every push redeploys automatically.
 
-1. **Database.** Sign up at neon.tech (you can sign in with GitHub, no card needed) and create a project. Copy the connection string it shows (`postgresql://…`).
-2. **Hugging Face token.** Sign up at huggingface.co. Under Settings → Access Tokens, create a token with **Write** permission and copy it.
-3. **GitHub secrets.** In this repository, open Settings → Secrets and variables → Actions → New repository secret, and add:
-   * `HF_TOKEN`: the Hugging Face token.
-   * `DCF_DATABASE_URL`: the Neon connection string.
-   * `DCF_INVITE_CODE` (optional): a code people must type to create an account, if you don't want the link open to anyone.
-4. **Deploy.** Open Actions → "Deploy to Hugging Face" → Run workflow (later pushes deploy by themselves). The run's summary shows the app's link, `https://<your-hf-user>-value-field.hf.space`. The first build takes about 5 minutes.
+1. **Database.** In Neon, open your project → **Connect**, and copy the connection string (`postgresql://…`).
+2. **Render.** Sign up at render.com with your GitHub account and allow it to see this repository. Then choose **New → Blueprint**, pick the repository, and paste the connection string into `DCF_DATABASE_URL`. `DCF_INVITE_CODE` is optional: if you set it, people need that code to create an account. Click **Apply**.
+3. After the first build (about 5–10 minutes) the app is at `https://value-field.onrender.com` (or the address Render shows). Share that link.
 
-Free Spaces go to sleep after about two days without visitors and wake up on the next visit, which takes around a minute. Your data is safe in Neon either way.
+Free Render services sleep after 15 minutes without visitors; the next visit wakes them in about a minute. The data is safe in Neon either way. The free instance has 512 MB of memory, so runs are capped at 200,000 paths there.
 
 ### Running it on your own computer (optional)
 

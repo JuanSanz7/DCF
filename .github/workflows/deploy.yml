@@ -1,7 +1,5 @@
-name: Deploy to Hugging Face
+name: Deploy to Hugging Face (manual; Docker Spaces need a PRO account)
 on:
-  push:
-    branches: [main, v2]
   workflow_dispatch:
 jobs:
   deploy:

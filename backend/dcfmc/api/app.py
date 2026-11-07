@@ -209,9 +209,16 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
         ok = not any(i["severity"] == "error" for i in issues)
         return {"issues": issues, "active": active_parameters(inp), "base": base_case(inp) if ok else None}
 
+    max_paths = int(os.environ.get("DCF_MAX_PATHS", "2000000"))
+
+    def check_paths(inp: ValuationInputs):
+        if inp.simulation.n > max_paths:
+            raise HTTPException(422, f"This server allows up to {max_paths:,} paths per run.")
+
     @app.post("/api/simulate")
     def simulate_ep(request: Request, payload: dict = Body(...)):
         inp = parse_inputs(payload)
+        check_paths(inp)
         issues = [i.to_dict() for i in validate(inp)]
         if any(i["severity"] == "error" for i in issues):
             raise HTTPException(422, detail={"issues": issues})
@@ -252,6 +259,7 @@ def create_app(store: Store | None = None, static_dir: str | Path | None = None)
             if not req.inputs:
                 raise HTTPException(400, "The simulation expired; send the inputs to run it again.")
             inp = parse_inputs(req.inputs)
+            check_paths(inp)
             if any(i.severity == "error" for i in validate(inp)):
                 raise HTTPException(422, "Inputs have errors")
             out = simulate(inp)
