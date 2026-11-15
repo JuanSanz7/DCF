@@ -5,7 +5,7 @@ services:
     name: value-field
     runtime: docker
     plan: free
-    branch: v2              # change to main after merging
+    branch: main
     autoDeploy: true
     healthCheckPath: /api/health
     envVars:
